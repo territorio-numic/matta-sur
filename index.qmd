@@ -1,0 +1,47 @@
+---
+title: "Colaboración Territorial NUMIC – Gran Matta Sur"
+subtitle: "Información socioespacial abierta para las organizaciones del sector suroriente de Santiago"
+page-layout: article
+toc: false
+---
+
+Este sitio reúne los resultados de la colaboración entre el **Núcleo Milenio en Inseguridad y Cohesión Urbana (NUMIC, Proyecto ANID `NCS2025_047`)**, el **Centro de Investigación para el Desarrollo Local y Cultural (CEIDELC)** y la **Mesa Territorial Matta Sur (MTMS)**.
+
+El objetivo de esta iniciativa es poner a disposición de dirigentes vecinales, organizaciones comunitarias y equipos locales datos claros y actualizados a nivel de manzana y barrio sobre el sector **Gran Matta Sur** y su comparación con el resto de la comuna de Santiago.
+
+---
+
+### Diagnóstico Interactivo Disponible
+
+En la pestaña [**Diagnóstico Territorial: Matta Sur**](02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd) puede consultar mapas interactivos y gráficos comparados organizados según las **4 Zonas de trabajo de la Mesa Territorial Matta Sur** (`7` barrios, `431` manzanas y `76.065` habitantes):
+
+| Zona MTMS | Barrios incluidos | Manzanas | Población (Censo 2024) |
+| :--- | :--- | :---: | :---: |
+| **Zona 1** | Viel y Huemul | 112 | 21.743 |
+| **Zona 2** | Matta Sur y Bogotá | 170 | 25.405 |
+| **Zona 3** | Santa Elena | 16 | 14.944 |
+| **Zona 4** | Franklin y Sierra Bella | 133 | 13.973 |
+
+<p style="margin-top: 1.25rem;">
+  <a href="02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd" class="btn btn-primary" role="button">Abrir Diagnóstico Territorial: Matta Sur</a>
+</p>
+
+---
+
+### Ámbitos cubiertos
+
+El informe integra indicadores del **Censo de Población y Vivienda 2024 (INE)**, la **Matriz de Bienestar Humano Territorial (MBHT – CIT)** y la **Medición SIEDU (INE/MINVU)** en ocho dimensiones:
+
+1. Educación y escolaridad adulta
+2. Vivienda y allegamiento
+3. Medioambiente y disconfort ambiental
+4. Seguridad territorial
+5. Trabajo, desocupación e informalidad
+6. Migración y diversidad
+7. Grupos etarios y envejecimiento
+8. Calidad de veredas y accesibilidad urbana
+
+::: {.callout-note appearance="minimal"}
+**Nota de uso:** El mapa interactivo contiene las `1.711` manzanas de la comuna de Santiago, por lo que la pestaña del diagnóstico puede tardar unos segundos en cargar completamente en conexiones móviles.
+:::
+

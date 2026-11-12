@@ -1,0 +1,25 @@
+# Ignorar por defecto todo el repositorio de investigación (datos privados, trabajo de campo, documentos internos y archivos pesados)
+/*
+
+# Permitir exclusivamente el sitio web de divulgación y su configuración
+!/.gitignore
+!/README.md
+!/_quarto.yml
+!/index.qmd
+!/docs/
+!/docs/**
+
+# Permitir únicamente el código fuente del reporte comunitario (sin datos ni otros análisis)
+!/02-numic-data-rda/
+/02-numic-data-rda/*
+!/02-numic-data-rda/2-processing/
+/02-numic-data-rda/2-processing/*
+!/02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd
+
+# Excluir eventuales artefactos técnicos, caché o librerías duplicadas dentro de docs/
+/docs/**/*technical*
+/docs/**/*_files/
+/docs/.quarto/
+
+/.quarto/
+**/*.quarto_ipynb

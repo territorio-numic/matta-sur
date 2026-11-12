@@ -1,0 +1,37 @@
+project:
+  type: website
+  output-dir: docs
+  render:
+    - index.qmd
+    - 02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd
+
+execute:
+  freeze: auto
+
+website:
+  title: "NUMIC · Matta Sur"
+  site-url: "https://territorio-numic.github.io/matta-sur"
+  repo-url: "https://github.com/territorio-numic/matta-sur"
+  search: false
+  page-navigation: false
+  navbar:
+    background: light
+    left:
+      - text: "Inicio"
+        href: index.qmd
+      - text: "Diagnóstico Territorial: Matta Sur"
+        href: 02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd
+    right:
+      - icon: github
+        href: https://github.com/territorio-numic/matta-sur
+        aria-label: "Repositorio en GitHub"
+  page-footer:
+    left: "Núcleo Milenio en Inseguridad y Cohesión Urbana (NUMIC · NCS2025_047)"
+    right: "Colaboración con CEIDELC y Mesa Territorial Matta Sur (MTMS)"
+
+format:
+  html:
+    theme: cosmo
+    lang: es
+    toc: false
+
