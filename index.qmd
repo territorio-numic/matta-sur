@@ -28,20 +28,19 @@ En la pestaña [**Diagnóstico Territorial: Matta Sur**](02-numic-data-rda/2-pro
 
 ---
 
-### Ámbitos cubiertos
+### Dimensiones cubiertas
 
 El informe integra indicadores del **Censo de Población y Vivienda 2024 (INE)**, la **Matriz de Bienestar Humano Territorial (MBHT – CIT)** y la **Medición SIEDU (INE/MINVU)** en ocho dimensiones:
 
-1. Educación y escolaridad adulta
-2. Vivienda y allegamiento
-3. Medioambiente y disconfort ambiental
-4. Seguridad territorial
-5. Trabajo, desocupación e informalidad
-6. Migración y diversidad
-7. Grupos etarios y envejecimiento
-8. Calidad de veredas y accesibilidad urbana
+1. **Educación:** Años promedio de escolaridad adulta y analfabetismo
+2. **Vivienda:** Déficit cuantitativo, hacinamiento, allegamiento y arriendo sin contrato
+3. **Medioambiente:** Disconfort ambiental urbano
+4. **Seguridad:** Exposición a delitos en el espacio público
+5. **Trabajo:** Desocupación, trabajo independiente e inactividad laboral
+6. **Migración:** Población inmigrante, pueblos originarios y afrodescendencia
+7. **Envejecimiento:** Personas mayores (60+ años), infancia y dependencia etaria
+8. **Infraestructura:** Deterioro y estado predominante de veredas
 
 ::: {.callout-note appearance="minimal"}
 **Nota de uso:** El mapa interactivo contiene las `1.711` manzanas de la comuna de Santiago, por lo que la pestaña del diagnóstico puede tardar unos segundos en cargar completamente en conexiones móviles.
 :::
-

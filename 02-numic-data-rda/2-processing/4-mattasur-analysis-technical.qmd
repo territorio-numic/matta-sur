@@ -1,0 +1,1597 @@
+---
+title: "Diagnóstico Territorial Gran Matta Sur y Comuna de Santiago (Versión Técnica)"
+subtitle: "Análisis Multidimensional por Manzana Censal, Barrios y las 4 Zonas de la Mesa Territorial Matta Sur (Censo 2024, CIT-MBHT y SIEDU)"
+author: "Cristóbal Ortiz-Vilches (NUMIC)"
+date: today
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    toc: true
+    toc-depth: 3
+    toc-title: "Contenido"
+    page-layout: full
+    code-fold: true
+    code-summary: "Mostrar código R"
+execute:
+  warning: false
+  message: false
+---
+
+```{=html}
+<style>
+body.quarto-dark .maplibregl-popup-content,
+body.quarto-dark .maplibregl-ctrl,
+body.quarto-dark .mapboxgl-ctrl {
+  color: #1f2937 !important;
+}
+body.quarto-dark .dataTables_wrapper {
+  color: #e2e8f0 !important;
+}
+body.quarto-dark .dataTables_wrapper .dataTables_filter input,
+body.quarto-dark .dataTables_wrapper .dt-buttons .dt-button {
+  color: #e2e8f0 !important;
+  background: #1e293b !important;
+  border-color: #475569 !important;
+}
+</style>
+```
+
+## Introducción y Subdivisiones Territoriales de la Mesa Territorial Matta Sur (MTMS)
+
+El presente documento técnico-metodológico surge en el marco de una colaboración entre el **Núcleo Milenio en Inseguridad y Cohesión Urbana (NUMIC)** y el **Centro de Investigación para el Desarrollo Local y Cultural (CEIDELC)**, en coordinación directa con la **Mesa Territorial Matta Sur (MTMS)**. Su propósito es proveer un diagnóstico espacialmente desagregado a **nivel de manzana censal** para toda la comuna de **Santiago (`CUT 13101`)**, poniendo foco en los **7 barrios** y las **4 Zonas operativas** que conforman el **Gran Matta Sur (Sector Suroriente)**.
+
+De acuerdo con la organización territorial definida por la **Mesa Territorial Matta Sur (MTMS)** y el **CEIDELC**, el territorio del **Gran Matta Sur (Sector Suroriente)** agrupa **7 barrios oficiales** de la comuna de Santiago divididos en **4 Zonas**:
+
+- **Zona 1:** comprende los barrios **Viel** y **Huemul** (`112` manzanas censales; `21.743` habitantes).
+- **Zona 2:** comprende los barrios **Matta Sur** y **Bogotá** (`170` manzanas censales; `25.405` habitantes).
+- **Zona 3:** comprende el barrio **Santa Elena** (`16` manzanas censales; `14.944` habitantes).
+- **Zona 4:** comprende los barrios **Franklin** y **Sierra Bella** (`133` manzanas censales; `13.973` habitantes).
+
+En su conjunto, estas **4 Zonas (7 barrios)** reúnen `431` manzanas censales (`383` manzanas con población residente) y `76.065` habitantes, equivalentes al `17,3%` del total de la población de la comuna de Santiago (`438.981` habitantes en `1.711` manzanas).
+
+---
+
+## 1. Decisiones Metodológicas y Arquitectura del Procesamiento en R
+
+### 1.1. Fuentes de Datos y Regla de Preeminencia Geométrica
+
+El flujo de procesamiento integra cuatro fuentes geoespaciales oficiales bajo el estándar `tidyverse` y `sf` en proyección métrica **UTM Huso 19S (`EPSG:32719`)** para los cálculos geométricos y **WGS84 (`EPSG:4326`)** para la visualización interactiva en WebGL (`mapgl::maplibre`):
+
+1. **Censo de Población y Vivienda 2024 (`Cartografia_censo2024_Pais_Manzanas.parquet`):** Constituye la **geometría maestra ("las manzanas censales mandan")** con `1.711` manzanas urbanas en la comuna de Santiago (`cut == 13101`). A partir de su superficie proyectada en metros cuadrados se calcula la **densidad residencial (`densidad_mzn`, en hab/ha)** siguiendo el procedimiento de `marco-muestral.qmd`:
+   $$\text{Área (ha)} = \frac{\text{Área (m}^2\text{)}}{10.000}, \qquad \text{Densidad Residencial} = \frac{n_{\text{per}}}{\text{Área (ha)}}$$
+2. **Subdivisión Oficial de Barrios de Santiago (`LIMITE_BARRIOS.shp`) y Capa de 4 Zonas MTMS (`zonas_mtms_sf`):** Los `27` barrios comunales se asocian a cada manzana censal mediante su punto interior garantizado (`sf::st_point_on_surface()`). Posteriormente, los `7` barrios del Gran Matta Sur se fusionan geométricamente (`sf::st_union()`) para construir la nueva capa vectorial de las **4 Zonas de la MTMS**.
+3. **Matriz de Bienestar Humano Territorial del CIT (`CHILE_MBHT.parquet`):** Provee a escala de manzana los índices de calidad ambiental (`dim_amb`) y seguridad urbana (`dim_seg`), a partir de los cuales se calculan las tasas sintéticas de **Disconfort Ambiental (`ind_disconfort_amb = (1 - dim_amb) * 100`)** y **Exposición al Delito (`ind_inseguridad_del = (1 - dim_seg) * 100`)**.
+4. **Infraestructura Peatonal — Calidad de las Veredas SIEDU (`20211028_CARTOGRAFIA_SIEDU_LB2018.gdb`, capa `LB2018_IS40_Calidad_Veredas`):** Dado que la cartografía de veredas SIEDU (Línea Base 2018) presenta descalces morfológicos respecto a las manzanas del Censo 2024 (`1.711` polígonos), se aplica el método de **intersección espacial ponderada por superficie (`sf::st_intersection()`)** de `1-processing-zona.Rmd`, recalculado íntegramente **a escala de manzana censal (`cod_mzn`)**:
+   - Se codifica cada polígono de vereda según su estado físico: `EXCELENTE = 1`, `BUENO = 2`, `REGULAR = 3`, `MALO = 4` y `NO EXISTE = 5`.
+   - Para cada manzana censal $i$, se calcula el promedio ponderado por el área de los fragmentos intersectados ($a_{ij}$):
+     $$\text{qswalk\_pond}_i = \frac{\sum_j \text{qswalk}_{ij} \cdot a_{ij}}{\sum_j a_{ij}} \in [1, 5]$$
+   - Luego se transforma en la **Tasa Sintética de Deterioro de Veredas (`ind_deterioro_veredas`, escala `0–100%`)**:
+     $$\text{ind\_deterioro\_veredas}_i = \left(\frac{\text{qswalk\_pond}_i - 1}{4}\right) \times 100$$
+     donde `0%` equivale a veredas en estado excelente (`1`), `50%` a estado regular (`3`) y `100%` a veredas inexistentes (`5`).
+
+### 1.2. Tratamiento de Manzanas No Habitadas e Imputación Espacial
+
+En la comuna de Santiago existen `419` manzanas sin población residente (`n_per == 0`: parques, edificios institucionales, equipamientos o manzanas exclusivamente comerciales) y manzanas sin intersección directa con la capa SIEDU. Siguiendo `1-processing-mzn.Rmd`:
+
+- Para la **visualización cartográfica continua**, las manzanas con denominador cero o sin cruce directo reciben el valor de la manzana válida más cercana mediante `sf::st_nearest_feature()`, logrando `0` valores perdidos en los mapas.
+- Para el **cálculo de los promedios por Barrio (`resumen_barrios`), por Zona (`resumen_zonas`) y Comunal (`promedios_santiago`)**, los indicadores demográficos y habitacionales se promedian estrictamente sobre las **manzanas habitadas (`n_per > 0` / `n_vp > 0` / `n_hog > 0`)**, evitando distorsiones por parques o manzanas no residenciales.
+
+```{r setup-packages}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(sf)
+  library(arrow)
+  library(sfarrow)
+  library(mapgl)
+  library(plotly)
+  library(htmltools)
+  library(scales)
+  library(DT)
+})
+
+options(scipen = 999)
+```
+
+```{r load-and-process-data}
+# ==============================================================================
+# 1. CARGA DE BARRIOS DE SANTIAGO Y CONSTRUCCIÓN DE LAS 4 ZONAS MTMS
+# ==============================================================================
+barrios_stgo_utm <- st_read(
+  "G:/Mi unidad/research-projects/A-data-infra-rda/sig-shapes-chile/division-administrativa/LÍMITE_BARRIOS_STGO/LIMITE_BARRIOS.shp",
+  quiet = TRUE
+) |>
+  st_transform(32719) |>
+  st_make_valid() |>
+  mutate(
+    zona_corta = case_when(
+      BARRIO %in% c("VIEL", "HUEMUL")           ~ "Zona 1",
+      BARRIO %in% c("MATTA SUR", "BOGOTA")      ~ "Zona 2",
+      BARRIO %in% c("SANTA ELENA")              ~ "Zona 3",
+      BARRIO %in% c("FRANKLIN", "SIERRA BELLA") ~ "Zona 4",
+      TRUE ~ NA_character_
+    ),
+    zona_mtms = case_when(
+      BARRIO %in% c("VIEL", "HUEMUL")           ~ "Zona 1 (Viel - Huemul)",
+      BARRIO %in% c("MATTA SUR", "BOGOTA")      ~ "Zona 2 (Matta Sur - Bogotá)",
+      BARRIO %in% c("SANTA ELENA")              ~ "Zona 3 (Santa Elena)",
+      BARRIO %in% c("FRANKLIN", "SIERRA BELLA") ~ "Zona 4 (Franklin - Sierra Bella)",
+      TRUE ~ NA_character_
+    ),
+    es_gran_matta_sur = !is.na(zona_corta)
+  )
+
+# Disolución geométrica de los 7 barrios en las 4 Zonas de la Mesa Territorial Matta Sur
+zonas_mtms_utm <- barrios_stgo_utm |>
+  filter(es_gran_matta_sur) |>
+  group_by(zona_corta, zona_mtms) |>
+  summarise(
+    barrios_zona = paste(BARRIO, collapse = " + "),
+    geometry     = st_union(geometry),
+    .groups      = "drop"
+  ) |>
+  st_make_valid() |>
+  mutate(
+    etiqueta_mapa_zona = paste0(zona_corta, "\n(", barrios_zona, ")")
+  )
+
+barrios_stgo  <- st_transform(barrios_stgo_utm, 4326)
+zonas_mtms_sf <- st_transform(zonas_mtms_utm, 4326)
+
+# ==============================================================================
+# 2. CARGA DE CENSO 2024 (MANZANAS) Y CÁLCULO DE DENSIDAD RESIDENCIAL
+# ==============================================================================
+censo_stgo_utm <- read_parquet(
+  "G:/Mi unidad/research-projects/A-data-infra-rda/censo-chile/censo-2024/geodatos-2024/Cartografia_censo2024_Pais_Manzanas.parquet"
+) |>
+  rename_with(tolower) |>
+  filter(cut == 13101) |>
+  mutate(cod_mzn = as.character(manzent)) |>
+  select(
+    cod_mzn, cut, comuna, id_zona, area_c,
+    n_per, n_hog, n_vp, n_ocupado, n_desocupado, n_fuera_fuerza_trabajo,
+    prom_escolaridad18, n_cine_terciaria_maestria_doctorado, n_analfabet,
+    n_deficit_cuantitativo, n_viv_hacinadas, n_viv_irrecuperables,
+    n_tenencia_arrendada_sin_contrato, n_tenencia_arrendada_contrato,
+    n_tenencia_propia_pagandose, n_hog_allegados,
+    n_cise_rec_independientes, n_cise_rec_trabajador_no_remunerado,
+    n_inmigrantes, n_pueblos_orig, n_afrodescendencia,
+    n_edad_0_5, n_edad_6_13, n_edad_14_17, n_edad_18_24,
+    n_edad_25_44, n_edad_45_59, n_edad_60_mas, prom_edad,
+    n_hog_60, n_hog_menores, n_jefatura_mujer,
+    shape
+  ) |>
+  st_as_sf(crs = 4326) |>
+  st_transform(32719) |>
+  st_make_valid() |>
+  mutate(
+    # Cálculo de densidad residencial según marco-muestral.qmd (hab / ha)
+    area_m2        = as.numeric(sf::st_area(shape)),
+    area_hectareas = area_m2 / 10000,
+    densidad_mzn   = if_else(
+      area_hectareas > 0 & !is.na(area_hectareas),
+      n_per / area_hectareas,
+      NA_real_
+    )
+  )
+
+# ==============================================================================
+# 3. CARGA DE MATRIZ DE BIENESTAR HUMANO TERRITORIAL (CIT - MBHT)
+# ==============================================================================
+mbht_stgo_utm <- st_read_parquet(
+  "G:/Mi unidad/research-projects/A-data-infra-rda/sig-shapes-chile/MBHT_15112022/CHILE_MBHT.parquet"
+) |>
+  rename_with(tolower) |>
+  filter(cod_com == 13101, manz_en != "RURAL") |>
+  st_as_sf(crs = 4326) |>
+  st_transform(32719) |>
+  st_make_valid()
+
+# ==============================================================================
+# 4. CARGA Y RE-CÁLCULO DE CALIDAD DE VEREDAS SIEDU A NIVEL DE MANZANA CENSAL
+# ==============================================================================
+gdb_siedu_path <- "G:/Mi unidad/research-projects/A-data-infra-rda/sig-shapes-chile/siedu-chile/Cartografia_SIEDU_1ra_medicion/20211028_CARTOGRAFIA_SIEDU_LB2018.gdb"
+
+swalk_stgo_utm <- st_read(
+  gdb_siedu_path,
+  query = "SELECT * FROM LB2018_IS40_Calidad_Veredas WHERE CUT = 13101",
+  quiet = TRUE
+) |>
+  mutate(
+    qswalk = case_when(
+      VEREDAS == "EXCELENTE" ~ 1,
+      VEREDAS == "BUENO"     ~ 2,
+      VEREDAS == "REGULAR"   ~ 3,
+      VEREDAS == "MALO"      ~ 4,
+      VEREDAS == "NO EXISTE" ~ 5,
+      TRUE ~ NA_real_
+    )
+  ) |>
+  drop_na(qswalk) |>
+  st_make_valid() |>
+  st_transform(32719)
+
+# Intersección espacial ponderada por superficie sobre las manzanas censales 2024
+veredas_interseccion <- suppressWarnings(
+  st_intersection(
+    swalk_stgo_utm |> select(qswalk),
+    censo_stgo_utm |> select(cod_mzn)
+  )
+) |>
+  mutate(area_fragmento = as.numeric(st_area(Shape))) |>
+  st_drop_geometry()
+
+veredas_mzn_ponderada <- veredas_interseccion |>
+  group_by(cod_mzn) |>
+  summarise(
+    weighted_sum       = sum(qswalk * area_fragmento, na.rm = TRUE),
+    total_area_veredas = sum(area_fragmento, na.rm = TRUE),
+    .groups            = "drop"
+  ) |>
+  mutate(
+    qswalk_pond = if_else(
+      total_area_veredas > 0,
+      as.numeric(weighted_sum / total_area_veredas),
+      NA_real_
+    )
+  ) |>
+  select(cod_mzn, qswalk_pond)
+
+# ==============================================================================
+# 5. CRUCE ESPACIAL POR PUNTO INTERIOR (MANZANAS -> BARRIOS/ZONAS Y MBHT)
+# ==============================================================================
+centroides_mzn <- st_point_on_surface(censo_stgo_utm |> select(cod_mzn))
+
+join_barrios <- st_join(
+  centroides_mzn,
+  barrios_stgo_utm |> select(
+    unidad = UNIDAD, barrio = BARRIO, agrp = AGRP,
+    zona_corta, zona_mtms, es_gran_matta_sur
+  ),
+  join = st_intersects
+)
+
+if (any(is.na(join_barrios$barrio))) {
+  idx_na_b  <- which(is.na(join_barrios$barrio))
+  nearest_b <- st_nearest_feature(centroides_mzn[idx_na_b, ], barrios_stgo_utm)
+  join_barrios$barrio[idx_na_b]            <- barrios_stgo_utm$BARRIO[nearest_b]
+  join_barrios$unidad[idx_na_b]            <- barrios_stgo_utm$UNIDAD[nearest_b]
+  join_barrios$agrp[idx_na_b]              <- barrios_stgo_utm$AGRP[nearest_b]
+  join_barrios$zona_corta[idx_na_b]        <- barrios_stgo_utm$zona_corta[nearest_b]
+  join_barrios$zona_mtms[idx_na_b]         <- barrios_stgo_utm$zona_mtms[nearest_b]
+  join_barrios$es_gran_matta_sur[idx_na_b] <- barrios_stgo_utm$es_gran_matta_sur[nearest_b]
+}
+
+join_mbht <- st_join(
+  centroides_mzn,
+  mbht_stgo_utm |> select(dim_seg, dim_amb, dim_acc, dim_soc, mbht),
+  join = st_intersects
+) |>
+  st_drop_geometry() |>
+  group_by(cod_mzn) |>
+  summarise(
+    across(c(dim_seg, dim_amb, dim_acc, dim_soc, mbht), ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop"
+  )
+
+# Integración en el objeto maestro de manzanas de Santiago (WGS84 para visualización)
+mzn_stgo_sf <- censo_stgo_utm |>
+  st_transform(4326) |>
+  left_join(st_drop_geometry(join_barrios), by = "cod_mzn") |>
+  left_join(join_mbht, by = "cod_mzn") |>
+  left_join(veredas_mzn_ponderada, by = "cod_mzn")
+```
+
+```{r process-indicators}
+# ==============================================================================
+# 6. CÁLCULO DE INDICADORES POR DIMENSIÓN (8 DIMENSIONES) + IMPUTACIÓN
+# ==============================================================================
+mzn_stgo_sf <- mzn_stgo_sf |>
+  mutate(
+    manzana_habitada = n_per > 0,
+    n_per_18_mas     = n_edad_18_24 + n_edad_25_44 + n_edad_45_59 + n_edad_60_mas,
+    n_pea            = n_ocupado + n_desocupado,
+
+    # Limpieza de ceros estructurales en manzanas sin población residente
+    prom_escolaridad18 = if_else(n_per > 0 & prom_escolaridad18 > 0, prom_escolaridad18, NA_real_),
+    prom_edad          = if_else(n_per > 0 & prom_edad > 0, prom_edad, NA_real_),
+
+    # --- 1. EDUCACIÓN ---
+    pct_analfabetismo = if_else(n_per > 0, (n_analfabet / n_per) * 100, NA_real_),
+
+    # --- 2. VIVIENDA ---
+    pct_deficit_cuant     = if_else(n_vp > 0, (n_deficit_cuantitativo / n_vp) * 100, NA_real_),
+    tasa_hacinamiento     = if_else(n_vp > 0, (n_viv_hacinadas / n_vp) * 100, NA_real_),
+    pct_allegamiento      = if_else(n_hog > 0, (n_hog_allegados / n_hog) * 100, NA_real_),
+    pct_arriendo_informal = if_else(n_hog > 0, (n_tenencia_arrendada_sin_contrato / n_hog) * 100, NA_real_),
+
+    # --- 3. MEDIOAMBIENTE (CIT - MBHT) ---
+    ind_disconfort_amb = (1 - dim_amb) * 100,
+
+    # --- 4. SEGURIDAD (CIT - MBHT) ---
+    ind_inseguridad_del = (1 - dim_seg) * 100,
+
+    # --- 5. TRABAJO ---
+    tasa_desocupacion = if_else(n_pea > 0, (n_desocupado / n_pea) * 100, NA_real_),
+    pct_informalidad  = if_else(
+      n_ocupado > 0,
+      ((n_cise_rec_independientes + n_cise_rec_trabajador_no_remunerado) / n_ocupado) * 100,
+      NA_real_
+    ),
+    pct_inactividad = if_else(
+      (n_pea + n_fuera_fuerza_trabajo) > 0,
+      (n_fuera_fuerza_trabajo / (n_pea + n_fuera_fuerza_trabajo)) * 100,
+      NA_real_
+    ),
+
+    # --- 6. MIGRACIÓN ---
+    pct_inmigrantes  = if_else(n_per > 0, (n_inmigrantes / n_per) * 100, NA_real_),
+    pct_pueblos_orig = if_else(n_per > 0, (n_pueblos_orig / n_per) * 100, NA_real_),
+    pct_afro         = if_else(n_per > 0, (n_afrodescendencia / n_per) * 100, NA_real_),
+
+    # --- 7. ENVEJECIMIENTO ---
+    pct_adulto_mayor        = if_else(n_per > 0, (n_edad_60_mas / n_per) * 100, NA_real_),
+    pct_infancia            = if_else(n_per > 0, ((n_edad_0_5 + n_edad_6_13) / n_per) * 100, NA_real_),
+    tasa_dependencia_etaria = if_else(n_per > 0, ((n_edad_0_5 + n_edad_6_13 + n_edad_60_mas) / n_per) * 100, NA_real_),
+
+    # --- 8. INFRAESTRUCTURA (VEREDAS SIEDU) ---
+    ind_deterioro_veredas = ((qswalk_pond - 1) / 4) * 100
+  ) |>
+  mutate(across(
+    c(
+      starts_with("pct_"), starts_with("tasa_"), starts_with("ind_"),
+      prom_escolaridad18, prom_edad, qswalk_pond
+    ),
+    ~ if_else(is.finite(.x), .x, NA_real_)
+  ))
+
+# Función de imputación espacial por vecino más cercano (sf::st_nearest_feature)
+imputar_vecino_cercano <- function(sf_obj, vars_imputar, puntos_utm) {
+  df_out <- sf_obj
+  for (v in vars_imputar) {
+    na_mask <- is.na(df_out[[v]])
+    if (any(na_mask) && any(!na_mask)) {
+      idx_near <- st_nearest_feature(puntos_utm[na_mask, ], puntos_utm[!na_mask, ])
+      df_out[[v]][na_mask] <- df_out[[v]][!na_mask][idx_near]
+    }
+  }
+  return(df_out)
+}
+
+vars_a_imputar <- c(
+  "prom_escolaridad18", "pct_analfabetismo",
+  "pct_deficit_cuant", "tasa_hacinamiento", "pct_allegamiento", "pct_arriendo_informal",
+  "ind_disconfort_amb",
+  "ind_inseguridad_del",
+  "tasa_desocupacion", "pct_informalidad", "pct_inactividad",
+  "pct_inmigrantes", "pct_pueblos_orig", "pct_afro",
+  "pct_adulto_mayor", "pct_infancia", "tasa_dependencia_etaria", "prom_edad",
+  "qswalk_pond", "ind_deterioro_veredas"
+)
+
+mzn_stgo_sf <- imputar_vecino_cercano(mzn_stgo_sf, vars_a_imputar, centroides_mzn) |>
+  mutate(
+    cat_veredas = case_when(
+      qswalk_pond < 1.5 ~ "Excelente",
+      qswalk_pond < 2.5 ~ "Buena",
+      qswalk_pond < 3.5 ~ "Regular",
+      qswalk_pond < 4.5 ~ "Mala",
+      TRUE              ~ "Inexistente"
+    )
+  )
+
+# ==============================================================================
+# 7. TABLAS DE PROMEDIOS POR BARRIO (27 BARRIOS), ZONA (4 ZONAS) Y SANTIAGO
+# ==============================================================================
+resumen_barrios <- mzn_stgo_sf |>
+  st_drop_geometry() |>
+  group_by(barrio, agrp, zona_corta, zona_mtms, es_gran_matta_sur) |>
+  summarise(
+    n_manzanas              = n(),
+    n_manzanas_hab          = sum(manzana_habitada, na.rm = TRUE),
+    poblacion_total         = sum(n_per, na.rm = TRUE),
+    viviendas_total         = sum(n_vp, na.rm = TRUE),
+    hogares_total           = sum(n_hog, na.rm = TRUE),
+    densidad_media          = mean(densidad_mzn[manzana_habitada], na.rm = TRUE),
+
+    # 1. Educación
+    prom_escolaridad18      = mean(prom_escolaridad18[manzana_habitada], na.rm = TRUE),
+    pct_analfabetismo       = mean(pct_analfabetismo[manzana_habitada], na.rm = TRUE),
+
+    # 2. Vivienda
+    pct_deficit_cuant       = mean(pct_deficit_cuant[n_vp > 0], na.rm = TRUE),
+    tasa_hacinamiento       = mean(tasa_hacinamiento[n_vp > 0], na.rm = TRUE),
+    pct_allegamiento        = mean(pct_allegamiento[n_hog > 0], na.rm = TRUE),
+    pct_arriendo_informal   = mean(pct_arriendo_informal[n_hog > 0], na.rm = TRUE),
+
+    # 3. Medioambiente
+    ind_disconfort_amb      = mean(ind_disconfort_amb, na.rm = TRUE),
+
+    # 4. Seguridad
+    ind_inseguridad_del     = mean(ind_inseguridad_del, na.rm = TRUE),
+
+    # 5. Trabajo
+    tasa_desocupacion       = mean(tasa_desocupacion[manzana_habitada], na.rm = TRUE),
+    pct_informalidad        = mean(pct_informalidad[manzana_habitada], na.rm = TRUE),
+    pct_inactividad         = mean(pct_inactividad[manzana_habitada], na.rm = TRUE),
+
+    # 6. Migración
+    pct_inmigrantes         = mean(pct_inmigrantes[manzana_habitada], na.rm = TRUE),
+    pct_pueblos_orig        = mean(pct_pueblos_orig[manzana_habitada], na.rm = TRUE),
+    pct_afro                = mean(pct_afro[manzana_habitada], na.rm = TRUE),
+
+    # 7. Envejecimiento
+    pct_adulto_mayor        = mean(pct_adulto_mayor[manzana_habitada], na.rm = TRUE),
+    pct_infancia            = mean(pct_infancia[manzana_habitada], na.rm = TRUE),
+    tasa_dependencia_etaria = mean(tasa_dependencia_etaria[manzana_habitada], na.rm = TRUE),
+    prom_edad               = mean(prom_edad[manzana_habitada], na.rm = TRUE),
+
+    # 8. Infraestructura (Veredas SIEDU)
+    ind_deterioro_veredas   = mean(ind_deterioro_veredas, na.rm = TRUE),
+    qswalk_pond             = mean(qswalk_pond, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    cat_veredas = case_when(
+      qswalk_pond < 1.5 ~ "Excelente",
+      qswalk_pond < 2.5 ~ "Buena",
+      qswalk_pond < 3.5 ~ "Regular",
+      qswalk_pond < 4.5 ~ "Mala",
+      TRUE              ~ "Inexistente"
+    ),
+    sector_destacado = if_else(
+      es_gran_matta_sur,
+      "Gran Matta Sur (Sector Suroriente - 7 barrios)",
+      "Resto de Barrios de Santiago (20 barrios)"
+    ) |>
+      factor(levels = c(
+        "Gran Matta Sur (Sector Suroriente - 7 barrios)",
+        "Resto de Barrios de Santiago (20 barrios)"
+      )),
+    etiqueta_barrio_plot = if_else(
+      es_gran_matta_sur,
+      paste0(barrio, " (", str_replace(zona_corta, "Zona ", "Z"), ")"),
+      barrio
+    )
+  )
+
+# Resumen agregado para las 4 Zonas de la Mesa Territorial Matta Sur
+resumen_zonas <- mzn_stgo_sf |>
+  st_drop_geometry() |>
+  filter(es_gran_matta_sur) |>
+  group_by(zona_corta, zona_mtms) |>
+  summarise(
+    barrios_incluidos       = paste(sort(unique(barrio)), collapse = " + "),
+    n_manzanas              = n(),
+    n_manzanas_hab          = sum(manzana_habitada, na.rm = TRUE),
+    poblacion_total         = sum(n_per, na.rm = TRUE),
+    viviendas_total         = sum(n_vp, na.rm = TRUE),
+    hogares_total           = sum(n_hog, na.rm = TRUE),
+    densidad_media          = mean(densidad_mzn[manzana_habitada], na.rm = TRUE),
+    prom_escolaridad18      = mean(prom_escolaridad18[manzana_habitada], na.rm = TRUE),
+    pct_analfabetismo       = mean(pct_analfabetismo[manzana_habitada], na.rm = TRUE),
+    pct_deficit_cuant       = mean(pct_deficit_cuant[n_vp > 0], na.rm = TRUE),
+    tasa_hacinamiento       = mean(tasa_hacinamiento[n_vp > 0], na.rm = TRUE),
+    pct_allegamiento        = mean(pct_allegamiento[n_hog > 0], na.rm = TRUE),
+    pct_arriendo_informal   = mean(pct_arriendo_informal[n_hog > 0], na.rm = TRUE),
+    ind_disconfort_amb      = mean(ind_disconfort_amb, na.rm = TRUE),
+    ind_inseguridad_del     = mean(ind_inseguridad_del, na.rm = TRUE),
+    tasa_desocupacion       = mean(tasa_desocupacion[manzana_habitada], na.rm = TRUE),
+    pct_informalidad        = mean(pct_informalidad[manzana_habitada], na.rm = TRUE),
+    pct_inactividad         = mean(pct_inactividad[manzana_habitada], na.rm = TRUE),
+    pct_inmigrantes         = mean(pct_inmigrantes[manzana_habitada], na.rm = TRUE),
+    pct_pueblos_orig        = mean(pct_pueblos_orig[manzana_habitada], na.rm = TRUE),
+    pct_afro                = mean(pct_afro[manzana_habitada], na.rm = TRUE),
+    pct_adulto_mayor        = mean(pct_adulto_mayor[manzana_habitada], na.rm = TRUE),
+    pct_infancia            = mean(pct_infancia[manzana_habitada], na.rm = TRUE),
+    tasa_dependencia_etaria = mean(tasa_dependencia_etaria[manzana_habitada], na.rm = TRUE),
+    prom_edad               = mean(prom_edad[manzana_habitada], na.rm = TRUE),
+    ind_deterioro_veredas   = mean(ind_deterioro_veredas, na.rm = TRUE),
+    qswalk_pond             = mean(qswalk_pond, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+promedios_santiago <- mzn_stgo_sf |>
+  st_drop_geometry() |>
+  summarise(
+    prom_escolaridad18    = mean(prom_escolaridad18[manzana_habitada], na.rm = TRUE),
+    pct_deficit_cuant     = mean(pct_deficit_cuant[n_vp > 0], na.rm = TRUE),
+    ind_disconfort_amb    = mean(ind_disconfort_amb, na.rm = TRUE),
+    ind_inseguridad_del   = mean(ind_inseguridad_del, na.rm = TRUE),
+    tasa_desocupacion     = mean(tasa_desocupacion[manzana_habitada], na.rm = TRUE),
+    pct_inmigrantes       = mean(pct_inmigrantes[manzana_habitada], na.rm = TRUE),
+    pct_adulto_mayor      = mean(pct_adulto_mayor[manzana_habitada], na.rm = TRUE),
+    ind_deterioro_veredas = mean(ind_deterioro_veredas, na.rm = TRUE)
+  )
+
+# Asociamos a cada manzana el promedio de su Barrio
+mzn_stgo_sf <- mzn_stgo_sf |>
+  left_join(
+    resumen_barrios |>
+      select(
+        barrio,
+        barrio_prom_escolaridad18    = prom_escolaridad18,
+        barrio_pct_deficit_cuant     = pct_deficit_cuant,
+        barrio_ind_disconfort_amb    = ind_disconfort_amb,
+        barrio_ind_inseguridad_del   = ind_inseguridad_del,
+        barrio_tasa_desocupacion     = tasa_desocupacion,
+        barrio_pct_inmigrantes       = pct_inmigrantes,
+        barrio_pct_adulto_mayor      = pct_adulto_mayor,
+        barrio_ind_deterioro_veredas = ind_deterioro_veredas
+      ),
+    by = "barrio"
+  )
+```
+
+```{r helper-functions}
+# ==============================================================================
+# FUNCIONES CONSTRUCTORAS DE MAPAS (MAPGL) Y GRÁFICOS BARRIALES/ZONALES (PLOTLY)
+# ==============================================================================
+fmt_num <- function(x, digits = 1) {
+  format(round(x, digits), big.mark = ".", decimal.mark = ",", nsmall = digits, trim = TRUE)
+}
+
+# 1. FUNCIÓN CONSTRUCTORA DE MAPAS INTERACTIVOS POR MANZANA CON LAS 4 ZONAS MTMS
+crear_mapa_manzana_stgo <- function(
+    datos_sf,
+    barrios_sf,
+    zonas_sf,
+    var_col,
+    var_barrio_col,
+    prom_santiago_val,
+    titulo_leyenda,
+    subtitulo_var,
+    paleta_colores = c("#fcfdbf", "#fb9906", "#3b0f70"),
+    sufijo_unidad = "%",
+    sufijo_brecha = " pp",
+    rango_fijo = NULL,
+    lineas_extra_fn = NULL
+) {
+  valores <- datos_sf[[var_col]]
+  if (!is.null(rango_fijo)) {
+    cortes <- rango_fijo
+  } else {
+    cortes <- as.numeric(quantile(valores, probs = c(0.02, 0.50, 0.98), na.rm = TRUE))
+    if (length(unique(cortes)) < 3) {
+      cortes <- seq(min(valores, na.rm = TRUE), max(valores, na.rm = TRUE), length.out = 3)
+    }
+  }
+
+  val_mzn    <- datos_sf[[var_col]]
+  val_barrio <- datos_sf[[var_barrio_col]]
+  val_stgo   <- prom_santiago_val
+
+  diff_barrio  <- val_mzn - val_barrio
+  signo_barrio <- if_else(diff_barrio >= 0, paste0("+", fmt_num(diff_barrio, 1)), fmt_num(diff_barrio, 1))
+
+  diff_stgo  <- val_mzn - val_stgo
+  signo_stgo <- if_else(diff_stgo >= 0, paste0("+", fmt_num(diff_stgo, 1)), fmt_num(diff_stgo, 1))
+
+  extra_html <- if (!is.null(lineas_extra_fn)) {
+    lineas_extra_fn(datos_sf)
+  } else {
+    rep("", nrow(datos_sf))
+  }
+
+  barrio_titulo_inicial <- str_to_title(datos_sf$barrio)
+
+  datos_sf$tooltip_html <- paste0(
+    "<div style='font-family: system-ui, -apple-system, sans-serif; font-size: 12px; line-height: 1.42; padding: 6px 8px; min-width: 245px; color: #1f2937;'>",
+    "<div style='font-size: 13px; font-weight: 700; color: #111827; margin-bottom: 2px;'>",
+    "Barrio: ", datos_sf$barrio,
+    "</div>",
+    "<div style='font-size: 11px; color: #4b5563; margin-bottom: 6px;'>",
+    "Manzana: <strong>", datos_sf$cod_mzn, "</strong><br>",
+    "Población: <strong>", fmt_num(datos_sf$n_per, 0), " hab.</strong> | ",
+    "Viviendas: <strong>", fmt_num(datos_sf$n_vp, 0), "</strong> | ",
+    "Hogares: <strong>", fmt_num(datos_sf$n_hog, 0), "</strong><br>",
+    "Densidad Residencial: <strong>", fmt_num(datos_sf$densidad_mzn, 1), " hab/ha</strong>",
+    "</div>",
+    "<div style='background: #f8fafc; border-left: 3px solid #ea580c; padding: 5px 7px; margin-bottom: 6px; border-radius: 3px;'>",
+    "<span style='font-size: 11px; color: #374151;'>", subtitulo_var, ":</span><br>",
+    "<strong style='font-size: 15px; color: #111827;'>", fmt_num(val_mzn, 1), sufijo_unidad, "</strong><br>",
+    "<span style='font-size: 11px; color: #4b5563;'>Promedio Barrio (", barrio_titulo_inicial, "): <strong>",
+    fmt_num(val_barrio, 1), sufijo_unidad, "</strong> (", signo_barrio, sufijo_brecha, ")</span><br>",
+    "<span style='font-size: 11px; color: #4b5563;'>Promedio Santiago: <strong>",
+    fmt_num(val_stgo, 1), sufijo_unidad, "</strong> (", signo_stgo, sufijo_brecha, ")</span>",
+    "</div>",
+    extra_html,
+    "</div>"
+  )
+
+  maplibre(bounds = barrios_sf, style = carto_style("positron")) |>
+    # 1. Capa de manzanas censales con hover interactivo inmediato
+    add_fill_layer(
+      id           = "mzn_fill_layer",
+      source       = datos_sf,
+      fill_color   = interpolate(
+        column = var_col,
+        values = cortes,
+        stops  = paleta_colores,
+        na_color = "#e5e7eb"
+      ),
+      fill_opacity = 0.84,
+      fill_outline_color = "rgba(255, 255, 255, 0.28)",
+      tooltip      = "tooltip_html",
+      hover_options = list(
+        fill_opacity       = 0.98,
+        fill_outline_color = "#111111"
+      )
+    ) |>
+    # 2. Subdivisión interna de los 27 barrios de Santiago (trazo sutil para no interferir)
+    add_line_layer(
+      id           = "barrios_outline",
+      source       = barrios_sf,
+      line_color   = "#334155",
+      line_width   = 1.0,
+      line_opacity = 0.50
+    ) |>
+    # 3. Halo blanco exterior de las 4 Zonas del Gran Matta Sur (MTMS)
+    add_line_layer(
+      id           = "zonas_mtms_halo",
+      source       = zonas_sf,
+      line_color   = "#ffffff",
+      line_width   = 3.2,
+      line_opacity = 0.78
+    ) |>
+    # 4. Contorno limpio y no intrusivo de las 4 Zonas del Gran Matta Sur (MTMS)
+    add_line_layer(
+      id           = "zonas_mtms_highlight",
+      source       = zonas_sf,
+      line_color   = "#ea580c",
+      line_width   = 2.1,
+      line_opacity = 0.92
+    ) |>
+    # 5. Etiquetas de nombres de los 27 barrios
+    add_symbol_layer(
+      id              = "barrios_labels",
+      source          = barrios_sf,
+      text_field      = c("get", "BARRIO"),
+      text_size       = 9.5,
+      text_color      = "#1e293b",
+      text_halo_color = "#ffffff",
+      text_halo_width = 1.3
+    ) |>
+    # 6. Etiquetas discretas de las 4 Zonas MTMS
+    add_symbol_layer(
+      id              = "zonas_mtms_labels",
+      source          = zonas_sf,
+      text_field      = c("get", "zona_corta"),
+      text_size       = 11,
+      text_color      = "#9a3412",
+      text_halo_color = "#ffffff",
+      text_halo_width = 1.8
+    ) |>
+    add_legend(
+      legend_title = titulo_leyenda,
+      type         = "continuous",
+      values       = round(cortes, 1),
+      colors       = paleta_colores,
+      layer_id     = "mzn_fill_layer",
+      position     = "bottom-right",
+      interactive  = TRUE
+    ) |>
+    add_navigation_control(position = "top-right") |>
+    add_fullscreen_control(position = "top-right") |>
+    add_reset_control(position = "top-right") |>
+    add_screenshot_control(position = "top-right", image_scale = 2)
+}
+
+# 2. FUNCIÓN CONSTRUCTORA DE GRÁFICOS DE BARRAS POR BARRIO + LÍNEAS PUNTEADAS POR ZONA
+crear_grafico_barrios <- function(
+    df_barrios,
+    df_zonas,
+    var_col,
+    titulo_grafico,
+    eje_x_label,
+    orden_descendente = TRUE,
+    sufijo_unidad = "%",
+    sufijo_brecha = " pp",
+    limite_max = NULL,
+    lineas_tooltip_fn = NULL
+) {
+  prom_comunal <- mean(df_barrios[[var_col]], na.rm = TRUE)
+
+  df_plot <- df_barrios |>
+    filter(!is.na(.data[[var_col]])) |>
+    left_join(
+      df_zonas |> select(zona_corta, prom_zona_val = all_of(var_col)),
+      by = "zona_corta"
+    )
+
+  extra_tip <- if (!is.null(lineas_tooltip_fn)) {
+    lineas_tooltip_fn(df_plot)
+  } else {
+    rep("", nrow(df_plot))
+  }
+
+  df_plot <- df_plot |>
+    mutate(
+      valor        = .data[[var_col]],
+      brecha_com   = valor - prom_comunal,
+      signo_com    = if_else(brecha_com >= 0, paste0("+", fmt_num(brecha_com, 1)), fmt_num(brecha_com, 1)),
+      brecha_zona  = valor - prom_zona_val,
+      signo_zona   = if_else(brecha_zona >= 0, paste0("+", fmt_num(brecha_zona, 1)), fmt_num(brecha_zona, 1)),
+      barrio_ordenado = if (orden_descendente) {
+        fct_reorder(etiqueta_barrio_plot, valor)
+      } else {
+        fct_reorder(etiqueta_barrio_plot, -valor)
+      },
+      linea_zona_hover = if_else(
+        es_gran_matta_sur,
+        paste0("<br>Promedio ", zona_mtms, ": <b>", fmt_num(prom_zona_val, 1), sufijo_unidad, "</b> (", signo_zona, sufijo_brecha, ")"),
+        ""
+      ),
+      texto_hover = paste0(
+        "<b>Barrio: ", barrio, "</b>",
+        if_else(es_gran_matta_sur, paste0(" <b>[", zona_mtms, "]</b>"), ""), "<br>",
+        eje_x_label, ": <b>", fmt_num(valor, 1), sufijo_unidad, "</b><br>",
+        "Promedio Comunal Santiago: ", fmt_num(prom_comunal, 1), sufijo_unidad, " (", signo_com, sufijo_brecha, ")",
+        linea_zona_hover, "<br>",
+        "Manzanas: ", n_manzanas, " (", n_manzanas_hab, " habitadas) | Población: ", fmt_num(poblacion_total, 0), " hab.<br>",
+        "Densidad Residencial Media: ", fmt_num(densidad_media, 1), " hab/ha",
+        extra_tip
+      )
+    )
+
+  # Tabla de 5 líneas verticales punteadas (Media Comunal + 4 Zonas MTMS)
+  ref_lines <- bind_rows(
+    tibble(
+      referencia = "Media Comunal Santiago",
+      valor_ref  = prom_comunal,
+      detalle    = "27 barrios de la comuna de Santiago"
+    ),
+    df_zonas |>
+      transmute(
+        referencia = paste0("Prom. ", zona_corta, " (", barrios_incluidos, ")"),
+        valor_ref  = .data[[var_col]],
+        detalle    = zona_mtms
+      )
+  ) |>
+    mutate(
+      referencia = factor(referencia, levels = referencia),
+      hover_ref  = paste0(
+        "<b>", referencia, "</b><br>",
+        eje_x_label, " Promedio: <b>", fmt_num(valor_ref, 1), sufijo_unidad, "</b>"
+      )
+    )
+
+  colores_sector <- c(
+    "Gran Matta Sur (Sector Suroriente - 7 barrios)" = "#f77f00",
+    "Resto de Barrios de Santiago (20 barrios)"      = "#457b9d"
+  )
+
+  colores_lineas <- setNames(
+    c("#111827", "#7b2cbf", "#d90429", "#2a9d8f", "#1d3557"),
+    levels(ref_lines$referencia)
+  )
+
+  escala_y <- if (!is.null(limite_max)) {
+    scale_y_continuous(
+      limits = c(0, limite_max),
+      labels = function(x) paste0(x, sufijo_unidad),
+      expand = expansion(mult = c(0, 0.03))
+    )
+  } else {
+    scale_y_continuous(
+      labels = function(x) paste0(x, sufijo_unidad),
+      expand = expansion(mult = c(0, 0.08))
+    )
+  }
+
+  p <- ggplot(df_plot, aes(x = barrio_ordenado, y = valor)) +
+    geom_col(aes(fill = sector_destacado, text = texto_hover), width = 0.74) +
+    geom_hline(
+      data = ref_lines,
+      aes(yintercept = valor_ref, color = referencia),
+      linetype = "dashed",
+      linewidth = 0.65
+    ) +
+    # Puntos invisibles sobre las líneas para habilitar hover interactivo en cada línea punteada
+    geom_point(
+      data = ref_lines,
+      aes(x = levels(df_plot$barrio_ordenado)[ceiling(nrow(df_plot) / 2)], y = valor_ref, color = referencia, text = hover_ref),
+      size = 0.1,
+      alpha = 0
+    ) +
+    coord_flip() +
+    scale_fill_manual(values = colores_sector, name = "") +
+    scale_color_manual(values = colores_lineas, name = "") +
+    escala_y +
+    labs(
+      title = titulo_grafico,
+      x = NULL,
+      y = paste0(eje_x_label, " (líneas punteadas = promedios por Zona MTMS y media comunal)")
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      plot.title = element_text(face = "bold", size = 12),
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom"
+    )
+
+  plt <- ggplotly(p, tooltip = "text", height = 620)
+  seen_groups <- character(0)
+  for (i in seq_along(plt$x$data)) {
+    if (!is.null(plt$x$data[[i]]$name)) {
+      plt$x$data[[i]]$name <- gsub("^\\((.*),1\\)$", "\\1", plt$x$data[[i]]$name)
+    }
+    if (!is.null(plt$x$data[[i]]$legendgroup)) {
+      grp <- gsub("^\\((.*),1\\)$", "\\1", plt$x$data[[i]]$legendgroup)
+      plt$x$data[[i]]$legendgroup <- grp
+      if (grp %in% seen_groups) {
+        plt$x$data[[i]]$showlegend <- FALSE
+      } else if (isTRUE(plt$x$data[[i]]$showlegend)) {
+        seen_groups <- c(seen_groups, grp)
+      }
+    }
+  }
+
+  plt |>
+    layout(
+      legend = list(
+        orientation = "h",
+        x = 0,
+        y = -0.13,
+        font = list(size = 10.5),
+        title = list(text = "")
+      ),
+      margin = list(l = 165, r = 25, t = 50, b = 105),
+      hoverlabel = list(bgcolor = "white", font = list(size = 12, color = "#111111"))
+    ) |>
+    config(displaylogo = FALSE)
+}
+```
+
+---
+
+## 2. Análisis por Dimensión: Mapas de Manzanas y Promedios Comparados por Barrio y Zona
+
+En cada una de las **8 dimensiones** se presentan dos vistas complementarias:
+
+- **Mapa Interactivo por Manzana:** Muestra las `1.711` manzanas de la comuna de Santiago con los límites de los `27` barrios y el contorno destacado de las **4 Zonas del Gran Matta Sur** (`Zona 1`, `Zona 2`, `Zona 3` y `Zona 4`). Al pasar el cursor sobre cualquier manzana se despliegan su código de manzana, población, viviendas, hogares, **densidad residencial (`hab/ha`)**, el valor del indicador en la manzana, el **promedio de su barrio** y el **promedio de la comuna de Santiago**.
+- **Promedios Comparados por Barrio y Zona:** Ordena de manera lógica los `27` barrios comunales, destacando en **naranjo** a los **7 barrios del Gran Matta Sur (Sector Suroriente)** e incorporando **líneas punteadas de distintos colores** para comparar el promedio de cada una de las **4 Zonas** y la **Media Comunal de Santiago** (todas interactivas desde la leyenda).
+
+---
+
+### 2.1. Dimensión Educación
+
+Se evalúan los **Años Promedio de Escolaridad Adulta (`prom_escolaridad18`)** en personas de 18 años o más, junto con la **tasa de analfabetismo (`pct_analfabetismo`)**. *(En esta sección el indicador se presenta en su escala métrica original en años de estudio).*
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-educacion}
+mapa_educacion <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "prom_escolaridad18",
+  var_barrio_col    = "barrio_prom_escolaridad18",
+  prom_santiago_val = promedios_santiago$prom_escolaridad18,
+  titulo_leyenda    = "Escolaridad (años)",
+  subtitulo_var     = "Escolaridad Promedio (+18 años)",
+  paleta_colores    = c("#fde725", "#21918c", "#440154"),
+  sufijo_unidad     = " años",
+  sufijo_brecha     = " años",
+  lineas_extra_fn   = function(df) {
+    paste0(
+      "<div style='font-size: 11px; color: #444;'>",
+      "• Tasa de Analfabetismo: <strong>", fmt_num(df$pct_analfabetismo, 2), "%</strong>",
+      "</div>"
+    )
+  }
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_educacion))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-educacion}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "prom_escolaridad18",
+  titulo_grafico    = "Educación: Años Promedio de Escolaridad Adulta (+18 años) por Barrio y Zona",
+  eje_x_label       = "Años de Escolaridad (+18)",
+  orden_descendente = TRUE,
+  sufijo_unidad     = " años",
+  sufijo_brecha     = " años",
+  lineas_tooltip_fn = function(df) {
+    paste0(
+      "<br>• Analfabetismo: ", fmt_num(df$pct_analfabetismo, 2), "%"
+    )
+  }
+)
+```
+
+:::
+
+---
+
+### 2.2. Dimensión Vivienda
+
+Se evalúa el **Porcentaje de Déficit Cuantitativo de Vivienda (`pct_deficit_cuant`)**, correspondiente a la proporción de viviendas particulares que requieren reemplazo o nueva unidad habitacional (`n_deficit_cuantitativo / n_vp * 100`), acompañado de la **tasa de hacinamiento (`tasa_hacinamiento`)**, el **allegamiento (`pct_allegamiento`)** y el **arriendo sin contrato (`pct_arriendo_informal`)**.
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-vivienda}
+mapa_vivienda <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "pct_deficit_cuant",
+  var_barrio_col    = "barrio_pct_deficit_cuant",
+  prom_santiago_val = promedios_santiago$pct_deficit_cuant,
+  titulo_leyenda    = "Déficit Cuantitativo (%)",
+  subtitulo_var     = "Déficit Cuantitativo de Vivienda",
+  paleta_colores    = c("#fcfdbf", "#fb9906", "#3b0f70"),
+  lineas_extra_fn   = function(df) {
+    paste0(
+      "<div style='font-size: 11px; color: #444;'>",
+      "• Viviendas Hacinadas: <strong>", fmt_num(df$tasa_hacinamiento, 1), "%</strong><br>",
+      "• Hogares Allegados: <strong>", fmt_num(df$pct_allegamiento, 1), "%</strong><br>",
+      "• Arriendo sin Contrato: <strong>", fmt_num(df$pct_arriendo_informal, 1), "%</strong>",
+      "</div>"
+    )
+  }
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_vivienda))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-vivienda}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "pct_deficit_cuant",
+  titulo_grafico    = "Vivienda: Porcentaje de Déficit Cuantitativo por Barrio y Zona (%)",
+  eje_x_label       = "Déficit Cuantitativo",
+  orden_descendente = TRUE,
+  lineas_tooltip_fn = function(df) {
+    paste0(
+      "<br>• Hacinamiento: ", fmt_num(df$tasa_hacinamiento, 1), "%",
+      "<br>• Allegamiento: ", fmt_num(df$pct_allegamiento, 1), "%",
+      "<br>• Arriendo sin Contrato: ", fmt_num(df$pct_arriendo_informal, 1), "%"
+    )
+  }
+)
+```
+
+:::
+
+---
+
+### 2.3. Dimensión Medioambiente
+
+Se evalúa la **Tasa Sintética de Disconfort Ambiental (`ind_disconfort_amb = (1 - dim_amb) * 100`)** elaborada a partir de la Matriz de Bienestar Humano Territorial del CIT. En la rampa cromática, el **verde (`#41ab5d`)** representa menor disconfort ambiental (mayor cobertura vegetacional y confort térmico), mientras que los tonos **ocres y terracota (`#993404`)** indican menor presencia de vegetación y arbolado urbano y mayor exposición a calor en la manzana.
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-medioambiente}
+mapa_medioambiente <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "ind_disconfort_amb",
+  var_barrio_col    = "barrio_ind_disconfort_amb",
+  prom_santiago_val = promedios_santiago$ind_disconfort_amb,
+  titulo_leyenda    = "Disconfort Ambiental (%)",
+  subtitulo_var     = "Tasa Sintética de Disconfort Ambiental",
+  paleta_colores    = c("#41ab5d", "#fed976", "#993404"),
+  lineas_extra_fn   = NULL
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_medioambiente))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-medioambiente}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "ind_disconfort_amb",
+  titulo_grafico    = "Medioambiente: Tasa Sintética de Disconfort Ambiental por Barrio y Zona (CIT, %)",
+  eje_x_label       = "Disconfort Ambiental",
+  orden_descendente = TRUE,
+  lineas_tooltip_fn = NULL
+)
+```
+
+:::
+
+---
+
+### 2.4. Dimensión Seguridad
+
+Se evalúa la **Tasa Sintética de Exposición al Delito (`ind_inseguridad_del = (1 - dim_seg) * 100`)** calculada por el CIT en base a la concentración espacial de delitos contra las personas y la propiedad en el espacio público, desplegada en su rango completo de `0%` a `100%`.
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-seguridad}
+mapa_seguridad <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "ind_inseguridad_del",
+  var_barrio_col    = "barrio_ind_inseguridad_del",
+  prom_santiago_val = promedios_santiago$ind_inseguridad_del,
+  titulo_leyenda    = "Exposición a Delitos (%)",
+  subtitulo_var     = "Tasa Sintética de Exposición al Delito",
+  paleta_colores    = c("#fee5d9", "#fb6a4a", "#67000d"),
+  rango_fijo        = c(0, 50, 100),
+  lineas_extra_fn   = NULL
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_seguridad))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-seguridad}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "ind_inseguridad_del",
+  titulo_grafico    = "Seguridad: Tasa Sintética de Exposición al Delito por Barrio y Zona (CIT, 0–100%)",
+  eje_x_label       = "Exposición al Delito",
+  orden_descendente = TRUE,
+  limite_max        = 100,
+  lineas_tooltip_fn = NULL
+)
+```
+
+:::
+
+---
+
+### 2.5. Dimensión Trabajo
+
+Se evalúa la **Tasa de Desocupación Abierta (`tasa_desocupacion`)** sobre la Población Económicamente Activa (`n_desocupado / (n_ocupado + n_desocupado) * 100`), complementada con la **proporción de empleo independiente y familiar no remunerado (`pct_informalidad`)** y el **porcentaje de población fuera de la fuerza de trabajo (`pct_inactividad`)**. *(Nota metodológica: En el Censo 2024 del INE, `n_fuera_fuerza_trabajo` agrupa a toda la población de 15 años o más que no se encuentra ocupada ni buscando empleo activamente —incluyendo estudiantes de educación media y superior, personas jubiladas o pensionadas y personas dedicadas a labores de cuidado o quehaceres domésticos—, por lo que no equivale al concepto de jóvenes "Nini").*
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-trabajo}
+mapa_trabajo <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "tasa_desocupacion",
+  var_barrio_col    = "barrio_tasa_desocupacion",
+  prom_santiago_val = promedios_santiago$tasa_desocupacion,
+  titulo_leyenda    = "Desocupación (%)",
+  subtitulo_var     = "Tasa de Desocupación Laboral",
+  paleta_colores    = c("#edf8b1", "#41b6c4", "#081d58"),
+  lineas_extra_fn   = function(df) {
+    paste0(
+      "<div style='font-size: 11px; color: #444;'>",
+      "• Trabajo Independiente / No Remunerado: <strong>", fmt_num(df$pct_informalidad, 1), "%</strong><br>",
+      "• Población Fuera de Fuerza de Trabajo: <strong>", fmt_num(df$pct_inactividad, 1), "%</strong>",
+      "</div>"
+    )
+  }
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_trabajo))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-trabajo}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "tasa_desocupacion",
+  titulo_grafico    = "Trabajo: Tasa de Desocupación Abierta por Barrio y Zona (%)",
+  eje_x_label       = "Tasa de Desocupación",
+  orden_descendente = TRUE,
+  lineas_tooltip_fn = function(df) {
+    paste0(
+      "<br>• Trabajo Independiente / Informal: ", fmt_num(df$pct_informalidad, 1), "%",
+      "<br>• Población Fuera de Fuerza de Trabajo: ", fmt_num(df$pct_inactividad, 1), "%"
+    )
+  }
+)
+```
+
+:::
+
+---
+
+### 2.6. Dimensión Migración
+
+Se evalúa el **Porcentaje de Población Inmigrante Internacional (`pct_inmigrantes = n_inmigrantes / n_per * 100`)**, complementado con el **porcentaje de población perteneciente a pueblos originarios (`pct_pueblos_orig`)** y el **porcentaje de población afrodescendiente (`pct_afro = n_afrodescendencia / n_per * 100`)**.
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-migracion}
+mapa_migracion <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "pct_inmigrantes",
+  var_barrio_col    = "barrio_pct_inmigrantes",
+  prom_santiago_val = promedios_santiago$pct_inmigrantes,
+  titulo_leyenda    = "Población Inmigrante (%)",
+  subtitulo_var     = "Porcentaje de Población Inmigrante",
+  paleta_colores    = c("#f7fcfd", "#8c6bb1", "#4d004b"),
+  lineas_extra_fn   = function(df) {
+    paste0(
+      "<div style='font-size: 11px; color: #444;'>",
+      "• Pueblos Originarios: <strong>", fmt_num(df$pct_pueblos_orig, 1), "%</strong><br>",
+      "• Población Afrodescendiente: <strong>", fmt_num(df$pct_afro, 1), "%</strong>",
+      "</div>"
+    )
+  }
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_migracion))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-migracion}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "pct_inmigrantes",
+  titulo_grafico    = "Migración: Porcentaje de Población Inmigrante por Barrio y Zona (%)",
+  eje_x_label       = "Población Inmigrante",
+  orden_descendente = TRUE,
+  lineas_tooltip_fn = function(df) {
+    paste0(
+      "<br>• Pueblos Originarios: ", fmt_num(df$pct_pueblos_orig, 1), "%",
+      "<br>• Población Afrodescendiente: ", fmt_num(df$pct_afro, 1), "%"
+    )
+  }
+)
+```
+
+:::
+
+---
+
+### 2.7. Dimensión Envejecimiento
+
+Se evalúa el **Porcentaje de Personas Mayores de 60 años o más (`pct_adulto_mayor`)**, junto con el **Porcentaje de Población Infantil de 0 a 13 años (`pct_infancia`)**, la **Tasa Sintética de Dependencia Demográfica (`tasa_dependencia_etaria = (n_edad_0_5 + n_edad_6_13 + n_edad_60_mas) / n_per * 100`)** y la **edad promedio (`prom_edad`)**.
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-grupos-etarios}
+mapa_etarios <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "pct_adulto_mayor",
+  var_barrio_col    = "barrio_pct_adulto_mayor",
+  prom_santiago_val = promedios_santiago$pct_adulto_mayor,
+  titulo_leyenda    = "Adulto Mayor 60+ (%)",
+  subtitulo_var     = "Población de 60 años o más",
+  paleta_colores    = c("#fff7ec", "#fc8d59", "#7f0000"),
+  lineas_extra_fn   = function(df) {
+    paste0(
+      "<div style='font-size: 11px; color: #444;'>",
+      "• Infancia (0 a 13 años): <strong>", fmt_num(df$pct_infancia, 1), "%</strong><br>",
+      "• Tasa Dependencia Etaria (0–13 y 60+): <strong>", fmt_num(df$tasa_dependencia_etaria, 1), "%</strong><br>",
+      "• Edad Promedio Manzana: <strong>", fmt_num(df$prom_edad, 1), " años</strong>",
+      "</div>"
+    )
+  }
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_etarios))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-grupos-etarios}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "pct_adulto_mayor",
+  titulo_grafico    = "Envejecimiento: Porcentaje de Personas Mayores (60+ años) por Barrio y Zona (%)",
+  eje_x_label       = "Personas Mayores (60+ años)",
+  orden_descendente = TRUE,
+  lineas_tooltip_fn = function(df) {
+    paste0(
+      "<br>• Infancia (0–13 años): ", fmt_num(df$pct_infancia, 1), "%",
+      "<br>• Tasa Dependencia Etaria (0–13 + 60+): ", fmt_num(df$tasa_dependencia_etaria, 1), "%",
+      "<br>• Edad promedio: ", fmt_num(df$prom_edad, 1), " años"
+    )
+  }
+)
+```
+
+:::
+
+---
+
+### 2.8. Dimensión Infraestructura
+
+Se evalúa la infraestructura peatonal a nivel de manzana mediante la **Tasa Sintética de Deterioro de Veredas (`ind_deterioro_veredas`, 0–100%)**, calculada a partir del catastro SIEDU (`LB2018_IS40_Calidad_Veredas`) mediante intersección ponderada por superficie sobre la geometría oficial de las manzanas censales 2024. Valores cercanos a `0%` indican veredas excelentes, en torno a `50%` estado regular y cercanos a `100%` veredas en mal estado o inexistentes, informando como indicador secundario el **Estado Predominante de Vereda** (`cat_veredas`, escala de 1 a 5).
+
+::: {.panel-tabset}
+
+#### Mapa Interactivo por Manzana
+
+```{r map-veredas}
+mapa_veredas <- crear_mapa_manzana_stgo(
+  datos_sf          = mzn_stgo_sf,
+  barrios_sf        = barrios_stgo,
+  zonas_sf          = zonas_mtms_sf,
+  var_col           = "ind_deterioro_veredas",
+  var_barrio_col    = "barrio_ind_deterioro_veredas",
+  prom_santiago_val = promedios_santiago$ind_deterioro_veredas,
+  titulo_leyenda    = "Deterioro Veredas (%)",
+  subtitulo_var     = "Tasa Sintética de Deterioro de Veredas (SIEDU)",
+  paleta_colores    = c("#ffffcc", "#fd8d3c", "#800026"),
+  lineas_extra_fn   = function(df) {
+    paste0(
+      "<div style='font-size: 11px; color: #444;'>",
+      "• Estado Predominante de Vereda: <strong>", df$cat_veredas, " (nota ", fmt_num(df$qswalk_pond, 1), " de 5)</strong>",
+      "</div>"
+    )
+  }
+)
+
+browsable(div(style = "width: 100%; height: 72vh; border: 1px solid #ddd; border-radius: 6px;", mapa_veredas))
+```
+
+#### Promedios Comparados por Barrio
+
+```{r plot-veredas}
+crear_grafico_barrios(
+  df_barrios        = resumen_barrios,
+  df_zonas          = resumen_zonas,
+  var_col           = "ind_deterioro_veredas",
+  titulo_grafico    = "Infraestructura: Tasa Sintética de Deterioro de Veredas por Barrio y Zona (SIEDU, %)",
+  eje_x_label       = "Deterioro de Veredas",
+  orden_descendente = TRUE,
+  lineas_tooltip_fn = function(df) {
+    paste0(
+      "<br>• Estado Predominante de Vereda: ", df$cat_veredas, " (nota ", fmt_num(df$qswalk_pond, 1), " de 5)"
+    )
+  }
+)
+```
+
+:::
+
+---
+
+## 3. Síntesis Multidimensional Comparada: Barrios y Zonas del Gran Matta Sur
+
+### 3.1. ¿Cómo leer el Mapa de Calor (Heatmap) y por qué se invierte la dirección de Escolaridad en esta sección?
+
+Para comparar de un solo vistazo las **8 dimensiones** entre los **27 barrios de Santiago**, es necesario que todos los indicadores apunten en la misma dirección de **criticidad o presión territorial** (donde un color rojo represente siempre mayor vulnerabilidad, déficit o demanda social):
+
+- En las secciones anteriores, los **Años de Escolaridad Adulta (`prom_escolaridad18`)** constituyen el único indicador positivo (más alto = más años de estudio). Si se mantuviera sin invertir en el Mapa de Calor, los barrios con mayor escolaridad aparecerían pintados en rojo, lo cual resultaría contradictorio frente a columnas como Déficit de Vivienda, Desocupación o Infraestructura.
+- Por ello, **únicamente en la escala cromática de esta sección de Síntesis Multidimensional**, se invierte el signo del puntaje Z de escolaridad (`z_score = -scale(prom_escolaridad18)`), de manera que **menos años de estudio impliquen mayor criticidad relativa (rojo)**, conservando en las etiquetas y tablas el valor real en **años de escolaridad**.
+
+**Guía rápida de lectura del Heatmap:**
+
+1. **Colores Rojos (`Puntaje Z > 0`):** Indican que el barrio tiene un nivel de criticidad o presión territorial **superior al promedio comunal de Santiago** en esa dimensión (mientras más intenso el rojo, más se aleja por encima del promedio comunal de criticidad).
+2. **Color Blanco (`Puntaje Z ≈ 0`):** Indica que el barrio se ubica **en torno al promedio de la comuna de Santiago**.
+3. **Colores Azules (`Puntaje Z < 0`):** Indican que el barrio presenta una **menor criticidad (o condición más favorable)** que el promedio comunal.
+4. **Barrios en Negrita:** Los **7 barrios del Gran Matta Sur** (`VIEL`, `HUEMUL`, `MATTA SUR`, `BOGOTA`, `SANTA ELENA`, `FRANKLIN` y `SIERRA BELLA`) se encuentran **destacados en negrita** en el eje vertical junto a su Zona (`Z1` a `Z4`). Al pasar el cursor sobre cualquier recuadro se observa el promedio del barrio y el promedio comunal.
+
+```{r synthesis-heatmap}
+df_heatmap <- resumen_barrios |>
+  filter(!is.na(prom_escolaridad18)) |>
+  mutate(
+    etiqueta_y = if_else(
+      es_gran_matta_sur,
+      paste0("<b>", barrio, " (", str_replace(zona_corta, "Zona ", "Z"), ")</b>"),
+      barrio
+    )
+  ) |>
+  select(
+    barrio, etiqueta_y, zona_mtms, es_gran_matta_sur,
+    `1. Escolaridad (años)`  = prom_escolaridad18,
+    `2. Déficit Vivienda`    = pct_deficit_cuant,
+    `3. Disconfort Amb.`     = ind_disconfort_amb,
+    `4. Exposición Delito`   = ind_inseguridad_del,
+    `5. Desocupación`        = tasa_desocupacion,
+    `6. Migración`           = pct_inmigrantes,
+    `7. Envejecimiento`      = pct_adulto_mayor,
+    `8. Infraestructura`     = ind_deterioro_veredas
+  ) |>
+  pivot_longer(
+    cols      = -c(barrio, etiqueta_y, zona_mtms, es_gran_matta_sur),
+    names_to  = "dimension",
+    values_to = "valor_raw"
+  ) |>
+  group_by(dimension) |>
+  mutate(
+    media_dim  = mean(valor_raw, na.rm = TRUE),
+    z_raw      = as.numeric(scale(valor_raw)),
+    z_score    = if_else(dimension == "1. Escolaridad (años)", -z_raw, z_raw),
+    z_clip     = pmin(pmax(z_score, -2), 2),
+    unidad_dim = if_else(dimension == "1. Escolaridad (años)", " años", "%")
+  ) |>
+  ungroup() |>
+  mutate(
+    dimension    = factor(dimension, levels = unique(dimension)),
+    barrio_orden = fct_reorder(etiqueta_y, z_score, .fun = mean),
+    hover_matriz = paste0(
+      "<b>Barrio: ", barrio, "</b>",
+      if_else(es_gran_matta_sur, paste0(" <b>[", zona_mtms, "]</b>"), ""), "<br>",
+      "Dimensión: <b>", dimension, "</b><br>",
+      "Promedio Barrio: <b>", fmt_num(valor_raw, 1), unidad_dim, "</b><br>",
+      "Media Comunal Santiago: ", fmt_num(media_dim, 1), unidad_dim, "<br>",
+      "Criticidad Relativa (Puntaje Z): <b>", if_else(z_score >= 0, "+", ""), fmt_num(z_score, 2), " DE</b>"
+    )
+  )
+
+p_heat <- ggplot(df_heatmap, aes(x = dimension, y = barrio_orden, fill = z_clip, text = hover_matriz)) +
+  geom_tile(color = "white", linewidth = 0.45) +
+  scale_fill_gradient2(
+    low      = "#2166ac",
+    mid      = "#f7f7f7",
+    high     = "#b2182b",
+    midpoint = 0,
+    limits   = c(-2, 2),
+    name     = "Criticidad\n(Puntaje Z)"
+  ) +
+  labs(
+    title = "Mapa de Calor Multidimensional (8 Dimensiones de Criticidad — 7 Barrios del Gran Matta Sur en Negrita)",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title  = element_text(face = "bold", size = 12),
+    axis.text.x = element_text(angle = 20, hjust = 1, face = "bold"),
+    panel.grid  = element_blank()
+  )
+
+ggplotly(p_heat, tooltip = "text", height = 680) |>
+  layout(
+    margin     = list(l = 175, r = 20, t = 50, b = 85),
+    hoverlabel = list(bgcolor = "white", font = list(size = 12, color = "#111111"))
+  ) |>
+  config(displaylogo = FALSE)
+```
+
+---
+
+### 3.2. Cuadro Resumen de las 4 Zonas de la Mesa Territorial Matta Sur (MTMS)
+
+A continuación se presenta el resumen consolidado de las **4 Zonas del Gran Matta Sur** en comparación con el total del **Gran Matta Sur (Sector Suroriente)** y el **Promedio Comunal de Santiago**:
+
+```{r synthesis-zonas-table}
+fila_gran_matta <- mzn_stgo_sf |>
+  st_drop_geometry() |>
+  filter(es_gran_matta_sur) |>
+  summarise(
+    zona_mtms             = "Total Gran Matta Sur (4 Zonas)",
+    barrios_incluidos     = "7 barrios del Sector Suroriente",
+    n_manzanas            = n(),
+    poblacion_total       = sum(n_per, na.rm = TRUE),
+    densidad_media        = mean(densidad_mzn[manzana_habitada], na.rm = TRUE),
+    prom_escolaridad18    = mean(prom_escolaridad18[manzana_habitada], na.rm = TRUE),
+    pct_deficit_cuant     = mean(pct_deficit_cuant[n_vp > 0], na.rm = TRUE),
+    ind_disconfort_amb    = mean(ind_disconfort_amb, na.rm = TRUE),
+    ind_inseguridad_del   = mean(ind_inseguridad_del, na.rm = TRUE),
+    tasa_desocupacion     = mean(tasa_desocupacion[manzana_habitada], na.rm = TRUE),
+    pct_inmigrantes       = mean(pct_inmigrantes[manzana_habitada], na.rm = TRUE),
+    pct_adulto_mayor      = mean(pct_adulto_mayor[manzana_habitada], na.rm = TRUE),
+    ind_deterioro_veredas = mean(ind_deterioro_veredas, na.rm = TRUE)
+  )
+
+fila_comuna <- mzn_stgo_sf |>
+  st_drop_geometry() |>
+  summarise(
+    zona_mtms             = "Promedio Comunal Santiago (CUT 13101)",
+    barrios_incluidos     = "27 barrios de la comuna",
+    n_manzanas            = n(),
+    poblacion_total       = sum(n_per, na.rm = TRUE),
+    densidad_media        = mean(densidad_mzn[manzana_habitada], na.rm = TRUE),
+    prom_escolaridad18    = mean(prom_escolaridad18[manzana_habitada], na.rm = TRUE),
+    pct_deficit_cuant     = mean(pct_deficit_cuant[n_vp > 0], na.rm = TRUE),
+    ind_disconfort_amb    = mean(ind_disconfort_amb, na.rm = TRUE),
+    ind_inseguridad_del   = mean(ind_inseguridad_del, na.rm = TRUE),
+    tasa_desocupacion     = mean(tasa_desocupacion[manzana_habitada], na.rm = TRUE),
+    pct_inmigrantes       = mean(pct_inmigrantes[manzana_habitada], na.rm = TRUE),
+    pct_adulto_mayor      = mean(pct_adulto_mayor[manzana_habitada], na.rm = TRUE),
+    ind_deterioro_veredas = mean(ind_deterioro_veredas, na.rm = TRUE)
+  )
+
+tabla_zonas_df <- bind_rows(
+  resumen_zonas |>
+    select(
+      zona_mtms, barrios_incluidos, n_manzanas, poblacion_total, densidad_media,
+      prom_escolaridad18, pct_deficit_cuant, ind_disconfort_amb, ind_inseguridad_del,
+      tasa_desocupacion, pct_inmigrantes, pct_adulto_mayor, ind_deterioro_veredas
+    ),
+  fila_gran_matta,
+  fila_comuna
+) |>
+  mutate(across(
+    c(
+      densidad_media, prom_escolaridad18, pct_deficit_cuant, ind_disconfort_amb,
+      ind_inseguridad_del, tasa_desocupacion, pct_inmigrantes, pct_adulto_mayor,
+      ind_deterioro_veredas
+    ),
+    ~ round(.x, 1)
+  )) |>
+  rename(
+    `Zona / Unidad Territorial` = zona_mtms,
+    `Barrios que comprende`     = barrios_incluidos,
+    `Manzanas`                  = n_manzanas,
+    `Población`                 = poblacion_total,
+    `Densidad (hab/ha)`         = densidad_media,
+    `1. Escolaridad (años)`     = prom_escolaridad18,
+    `2. Déficit Vivienda (%)`   = pct_deficit_cuant,
+    `3. Disconfort Amb. (%)`    = ind_disconfort_amb,
+    `4. Exposición Delito (%)`  = ind_inseguridad_del,
+    `5. Desocupación (%)`       = tasa_desocupacion,
+    `6. Migración (%)`          = pct_inmigrantes,
+    `7. Envejecimiento (%)`     = pct_adulto_mayor,
+    `8. Infraestructura (%)`    = ind_deterioro_veredas
+  )
+
+datatable(
+  tabla_zonas_df,
+  rownames = FALSE,
+  options  = list(
+    dom        = "t",
+    ordering   = FALSE,
+    scrollX    = TRUE
+  ),
+  caption = htmltools::tags$caption(
+    style = "caption-side: top; text-align: left; font-weight: bold;",
+    "Promedios Comparados por las 4 Zonas de la Mesa Territorial Matta Sur, Total Gran Matta Sur y Comuna de Santiago"
+  )
+) |>
+  formatCurrency(columns = c("Manzanas", "Población"), currency = "", interval = 3, mark = ".", digits = 0) |>
+  formatStyle(
+    "Zona / Unidad Territorial",
+    target          = "row",
+    fontWeight      = styleEqual(c("Total Gran Matta Sur (4 Zonas)", "Promedio Comunal Santiago (CUT 13101)"), c("bold", "bold")),
+    backgroundColor = styleEqual(c("Total Gran Matta Sur (4 Zonas)", "Promedio Comunal Santiago (CUT 13101)"), c("rgba(247, 127, 0, 0.14)", "rgba(148, 163, 184, 0.18)"))
+  )
+```
+
+---
+
+### 3.3. Tabla Interactiva de los 27 Barrios con Alerta de Criticidad por Color
+
+En la siguiente tabla se presentan los **27 barrios de la comuna de Santiago**:
+
+- **Filas en negrita:** Corresponden a los **7 barrios del Gran Matta Sur** (ordenados al inicio de la tabla junto a su Zona `Zona 1` a `Zona 4`).
+- **Celdas coloreadas según nivel de criticidad comunal:**
+  - <span style="background-color:#f8d7da; color:#842029; font-weight:bold; padding:2px 6px; border-radius:3px;">Rojo (Alta Criticidad)</span>: el indicador del barrio supera de forma pronunciada el promedio comunal ($> \text{Media Comunal} + 0,5\,\text{DE}$, o $< \text{Media Comunal} - 0,5\,\text{DE}$ en Escolaridad).
+  - <span style="background-color:#fff3cd; color:#664d03; padding:2px 6px; border-radius:3px;">Ámbar (Sobre el Promedio)</span>: el indicador del barrio presenta criticidad moderadamente superior al promedio comunal.
+
+```{r synthesis-table}
+tabla_barrios_df <- resumen_barrios |>
+  arrange(desc(es_gran_matta_sur), zona_corta, barrio) |>
+  mutate(
+    zona_display = if_else(es_gran_matta_sur, zona_mtms, "Resto de Santiago"),
+    flag_gms     = if_else(es_gran_matta_sur, "Gran Matta Sur", "Resto Santiago")
+  ) |>
+  select(
+    flag_gms,
+    `Barrio`                   = barrio,
+    `Sector / Zona MTMS`       = zona_display,
+    `Manzanas`                 = n_manzanas,
+    `Población (Censo 2024)`   = poblacion_total,
+    `Densidad (hab/ha)`        = densidad_media,
+    `1. Escolaridad (años)`    = prom_escolaridad18,
+    `2. Déficit Vivienda (%)`  = pct_deficit_cuant,
+    `3. Disconfort Amb. (%)`   = ind_disconfort_amb,
+    `4. Exposición Delito (%)` = ind_inseguridad_del,
+    `5. Desocupación (%)`      = tasa_desocupacion,
+    `6. Migración (%)`         = pct_inmigrantes,
+    `7. Envejecimiento (%)`    = pct_adulto_mayor,
+    `8. Infraestructura (%)`   = ind_deterioro_veredas
+  ) |>
+  mutate(across(
+    c(
+      `Densidad (hab/ha)`, `1. Escolaridad (años)`, `2. Déficit Vivienda (%)`,
+      `3. Disconfort Amb. (%)`, `4. Exposición Delito (%)`, `5. Desocupación (%)`,
+      `6. Migración (%)`, `7. Envejecimiento (%)`, `8. Infraestructura (%)`
+    ),
+    ~ round(.x, 1)
+  ))
+
+cols_criticidad_positiva <- c(
+  "2. Déficit Vivienda (%)",
+  "3. Disconfort Amb. (%)",
+  "4. Exposición Delito (%)",
+  "5. Desocupación (%)",
+  "6. Migración (%)",
+  "7. Envejecimiento (%)",
+  "8. Infraestructura (%)"
+)
+
+dt_barrios <- datatable(
+  tabla_barrios_df,
+  rownames   = FALSE,
+  filter     = "top",
+  extensions = "Buttons",
+  options    = list(
+    pageLength = 27,
+    dom        = "Bfrtip",
+    buttons    = c("copy", "csv", "excel"),
+    scrollX    = TRUE,
+    columnDefs = list(list(visible = FALSE, targets = 0))
+  ),
+  caption = htmltools::tags$caption(
+    style = "caption-side: top; text-align: left; font-weight: bold;",
+    "Síntesis de los 27 Barrios de la Comuna de Santiago (7 Barrios del Gran Matta Sur en negrita; celdas coloreadas según criticidad comunal)"
+  )
+) |>
+  formatCurrency(
+    columns  = c("Manzanas", "Población (Censo 2024)"),
+    currency = "",
+    interval = 3,
+    mark     = ".",
+    digits   = 0
+  ) |>
+  formatStyle(
+    "flag_gms",
+    target          = "row",
+    fontWeight      = styleEqual(c("Gran Matta Sur", "Resto Santiago"), c("bold", "normal")),
+    backgroundColor = styleEqual(c("Gran Matta Sur", "Resto Santiago"), c("rgba(247, 127, 0, 0.08)", "transparent"))
+  )
+
+# En Escolaridad (años), menor escolaridad implica mayor criticidad
+vec_esc <- tabla_barrios_df[["1. Escolaridad (años)"]]
+umbral_esc_bajo  <- round(mean(vec_esc, na.rm = TRUE) - 0.5 * sd(vec_esc, na.rm = TRUE), 1)
+umbral_esc_medio <- round(mean(vec_esc, na.rm = TRUE), 1)
+
+dt_barrios <- dt_barrios |>
+  formatStyle(
+    "1. Escolaridad (años)",
+    backgroundColor = styleInterval(
+      c(umbral_esc_bajo, umbral_esc_medio),
+      c("#f8d7da", "#fff3cd", "transparent")
+    ),
+    color = styleInterval(
+      c(umbral_esc_bajo, umbral_esc_medio),
+      c("#842029", "#664d03", "")
+    )
+  )
+
+for (col_name in cols_criticidad_positiva) {
+  vec_vals <- tabla_barrios_df[[col_name]]
+  umbral_medio <- round(mean(vec_vals, na.rm = TRUE), 1)
+  umbral_alto  <- round(mean(vec_vals, na.rm = TRUE) + 0.5 * sd(vec_vals, na.rm = TRUE), 1)
+
+  dt_barrios <- dt_barrios |>
+    formatStyle(
+      col_name,
+      backgroundColor = styleInterval(
+        c(umbral_medio, umbral_alto),
+        c("transparent", "#fff3cd", "#f8d7da")
+      ),
+      color = styleInterval(
+        c(umbral_medio, umbral_alto),
+        c("", "#664d03", "#842029")
+      )
+    )
+}
+
+dt_barrios
+```

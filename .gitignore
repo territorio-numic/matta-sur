@@ -15,6 +15,7 @@
 !/02-numic-data-rda/2-processing/
 /02-numic-data-rda/2-processing/*
 !/02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd
+!/02-numic-data-rda/2-processing/4-mattasur-analysis-technical.qmd
 
 # Excluir eventuales artefactos técnicos, caché o librerías duplicadas dentro de docs/
 /docs/**/*technical*
