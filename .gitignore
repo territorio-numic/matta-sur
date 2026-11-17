@@ -16,6 +16,10 @@
 /02-numic-data-rda/2-processing/*
 !/02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd
 !/02-numic-data-rda/2-processing/4-mattasur-analysis-technical.qmd
+!/02-numic-data-rda/4-reports/
+/02-numic-data-rda/4-reports/*
+!/02-numic-data-rda/4-reports/geovisor-ia_report.qmd
+!/02-numic-data-rda/4-reports/geovisor-ia_slide.qmd
 
 # Excluir eventuales artefactos técnicos, caché o librerías duplicadas dentro de docs/
 /docs/**/*technical*

@@ -4,6 +4,8 @@ project:
   render:
     - index.qmd
     - 02-numic-data-rda/2-processing/4-mattasur-analysis-report.qmd
+    - 02-numic-data-rda/4-reports/geovisor-ia_report.qmd
+    - 02-numic-data-rda/4-reports/geovisor-ia_slide.qmd
 
 execute:
   freeze: auto

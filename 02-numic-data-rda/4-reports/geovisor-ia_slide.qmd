@@ -1,0 +1,335 @@
+---
+title: "Geovisores Territoriales con R, Quarto e IA"
+subtitle: "Teoría Cartográfica, Jerga SIG y Prompt Engineering para Ciencias Sociales"
+author: "Cristóbal Ortiz-Vilches · Núcleo Milenio NUMIC"
+date: today
+format:
+  revealjs:
+    theme: [default, night]
+    slide-number: c/t
+    transition: slide
+    background-transition: fade
+    incremental: false
+    code-copy: true
+    code-line-numbers: true
+    scrollable: true
+    width: 1280
+    height: 720
+    footer: "Curso NUMIC: Geovisores Web con R + Quarto + IA | <a href='geovisor-ia_report.html' target='_blank' style='color:#f77f00;font-weight:bold;'>📘 Abrir Manual Completo del Curso</a>"
+execute:
+  echo: true
+  eval: false
+  warning: false
+  message: false
+---
+
+## ¿Por qué Geovisores Web en Ciencias Sociales? {.smaller}
+
+::: {.columns}
+::: {.column width="55%"}
+### El giro espacial e interactivo
+- Los fenómenos estudiados por la **Sociología, Geografía y Ciencia Política** (segregación, inseguridad, voto, déficit habitacional, envejecimiento) tienen una expresión territorial desigual.
+- Los mapas estáticos en PDF impiden explorar **qué ocurre en una manzana específica** o comparar un barrio con su entorno.
+- Hoy podemos construir portales interactivos abiertos combinando:
+  1. **R (`sf` + `tidyverse` + `mapgl` + `plotly` + `DT`)**
+  2. **Quarto (`.qmd`) + GitHub Pages**
+  3. **Asistentes de IA dirigidos con jerga técnica precisa**
+:::
+
+::: {.column width="45%"}
+::: {.callout-tip}
+### La tesis central de este curso
+La IA escribe código R y HTML en segundos, **pero no sabe geografía ni diseño cartográfico por sí sola**.
+
+Quien domina conceptos como **`EPSG:32719`**, **interpolación areal**, **ceros estructurales**, **coropletas** y **puntajes Z** puede darle instrucciones exactas a la IA y construir un geovisor profesional sin romper el código.
+:::
+<p style="margin-top:1rem;">
+  <a href="geovisor-ia_report.html" target="_blank" style="background:#f77f00;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">📘 Ir al Manual Detallado con Demostración en Vivo</a>
+</p>
+:::
+:::
+
+---
+
+# Parte 1. Teoría Geográfica y Cartográfica {background-color="#0f172a"}
+
+Escala, MAUP, Sistemas de Coordenadas (`EPSG`) y Topología
+
+---
+
+## 1.1. Escala Geográfica y el Problema MAUP {.smaller}
+
+En el análisis urbano chileno trabajamos con **unidades espaciales anidadas**:
+
+| Escala | Unidad | Ejemplo en NUMIC (Santiago) | Propósito analítico |
+| :--- | :--- | :--- | :--- |
+| **Macro** | Comuna (`CUT`) | Santiago (`13101`, `438.981` hab.) | Contexto administrativo general. |
+| **Meso** | Zona / Barrio | **4 Zonas MTMS** y **27 Barrios** | Comparación barrial y acción comunitaria. |
+| **Micro** | Manzana (`MANZENT`) | **`1.711` manzanas** (`431` en Gran Matta Sur) | Detección de micro-bolsones de vulnerabilidad. |
+
+<br>
+
+::: {.callout-warning}
+### El Problema de la Unidad Espacial Modificable (MAUP) y la Falacia Ecológica
+- **MAUP (Openshaw, 1984):** El valor estadístico de un indicador cambia según dónde tracemos el límite del polígono (efecto de zonificación) y cuánto agreguemos los datos (efecto de escala).
+- **Solución de diseño en nuestro geovisor:** Combinar en pestañas (`::: {.panel-tabset}`) el **Mapa de Manzanas** (escala micro) con el **Gráfico de Barras por Barrio y Líneas por Zona** (escala meso).
+:::
+
+---
+
+## 1.2. ¿Qué es un SIG y cómo funciona `sf` en R? {.smaller}
+
+Un **Sistema de Información Geográfica (SIG)** une una **tabla de atributos** con una **columna geométrica**. En R, el paquete **`sf` (*Simple Features*)** permite manipular mapas con los mismos verbos de `dplyr` (`filter`, `mutate`, `group_by`, `summarise`, `left_join`):
+
+::: {.columns}
+::: {.column width="50%"}
+### Geometrías vectoriales básicas
+- **`POINT`:** Punto interior de una manzana (`st_point_on_surface()`).
+- **`LINESTRING`:** Ejes viales o contornos perimetrales.
+- **`POLYGON` / `MULTIPOLYGON`:** Manzanas censales, barrios y zonas.
+:::
+
+::: {.column width="50%"}
+### Los 3 formatos de archivo en NUMIC
+1. **Shapefile (`.shp`):** Clásico (`LIMITE_BARRIOS.shp` $\rightarrow$ `st_read()`).
+2. **Geodatabase (`.gdb`):** Contenedor multi-capa con soporte SQL (`SIEDU` veredas $\rightarrow$ `st_read(query = "SELECT ...")`).
+3. **GeoParquet (`.parquet`):** Estándar moderno ultrarrápido (`Censo 2024` y `MBHT-CIT` $\rightarrow$ `read_parquet()`).
+:::
+:::
+
+---
+
+## 1.3. Sistemas de Coordenadas (CRS) y Códigos `EPSG` {.smaller}
+
+::: {.callout-important}
+### El error #1 al programar mapas con IA: confundir grados con metros
+:::
+
+| Código EPSG | Nombre Técnico | Unidad | ¿Para qué se DEBE usar en el código? |
+| :--- | :--- | :---: | :--- |
+| **`EPSG:32719`** | **WGS 84 / UTM Huso 19S** *(Proyectado)* | **Metros ($\text{m}$)** | **Cálculos geométricos y físicos:** calcular áreas en $\text{m}^2$ o hectáreas (`st_area()`), densidad residencial ($\text{hab/ha}$), intersecciones (`st_intersection()`) y vecino más cercano (`st_nearest_feature()`). |
+| **`EPSG:4326`** | **WGS 84 Geográfico** *(Esférico)* | **Grados ($^\circ$)** | **Visualización web interactiva:** entregar las capas a `mapgl::maplibre()` o `leaflet()`, que exigen latitud/longitud en `EPSG:4326`. |
+
+```r
+# Flujo correcto: proyectar a metros (32719) para medir -> transformar a grados (4326) para mapear
+censo_utm <- censo_raw |>
+  st_as_sf(crs = 4326) |>
+  st_transform(32719) |>
+  st_make_valid() |>
+  mutate(
+    area_hectareas = as.numeric(st_area(shape)) / 10000,
+    densidad_mzn   = n_per / area_hectareas
+  )
+```
+
+---
+
+## 1.4. Cuatro Operaciones Topológicas Esenciales {.smaller}
+
+Cuando cruzamos fuentes distintas (Censo 2024, Barrios Municipales, CIT 2017 y Veredas SIEDU 2018), los polígonos no calzan exactamente. Debes indicarle a la IA cuál de estas 4 operaciones aplicar:
+
+1. **Reparación Topológica (`st_make_valid()`):** Corrige polígonos con auto-intersecciones o anillos abiertos antes de cualquier cruce.
+2. **Punto en Superficie (`st_point_on_surface()`):** A diferencia del centroide geométrico (`st_centroid()`), garantiza que el punto representativo de una manzana en forma de "L" o "U" caiga siempre **dentro** de la manzana al asignarle su Barrio.
+3. **Disolución Espacial (`st_union()`):** Fusiona los polígonos de los 7 barrios del Sector Suroriente para crear la nueva capa de **4 Zonas de la Mesa Territorial Matta Sur**.
+4. **Interpolación Areal Ponderada (`st_intersection()` + `st_area()`):** Cuando las manzanas SIEDU 2018 no coinciden con las manzanas del Censo 2024, **las manzanas censales mandan**: cortamos los fragmentos de vereda dentro de cada manzana censal y promediamos su nota ponderando por el área de cada fragmento.
+
+---
+
+## 1.5. Semiología Gráfica y Coherencia Semántica del Color {.smaller}
+
+Siguiendo a **Bertin** y **ColorBrewer**, al pedirle un mapa a la IA debemos especificar la lógica semántica de la paleta:
+
+- **Coherencia intuitiva del color:**
+  - En **Medioambiente (`Disconfort Ambiental`)**, un valor alto significa *menos vegetación y más calor*. Si usas una paleta verde donde lo más alto es verde oscuro, induces a error. Lo correcto es **Verde (`#41ab5d`, mayor vegetación) $\rightarrow$ Amarillo (`#fed976`) $\rightarrow$ Terracota (`#993404`, isla de calor)**.
+- **Dirección unificada en el Heatmap Multidimensional:**
+  - En una matriz de criticidad donde **Rojo = Mayor urgencia** y **Azul = Menor urgencia**, una variable positiva como **Años de Escolaridad** debe **invertir su signo estandarizado (`-z_score`)** para no pintar de rojo de alerta a los barrios con mayor educación.
+- **Cortes por Percentiles (`P2–P50–P98`) vs. Rango Fijo (`0–100%`):**
+  - Percentiles (`0.02, 0.50, 0.98`) evitan que un valor extremo apague el contraste del mapa.
+  - Rango fijo (`c(0, 50, 100)`) se utiliza cuando el usuario requiere ver la escala teórica completa (ej. **Seguridad** de `0%` a `100%`).
+
+---
+
+# Parte 2. El Vocabulario Técnico para Dirigir a la IA {background-color="#1e3a8a"}
+
+Diccionario de Jerga SIG, WebGL y Quarto
+
+---
+
+## 2.1. Jerga de Visualización Web (`mapgl`, `plotly`, `DT`) {.smaller}
+
+| Concepto / Término | Significado Técnico | Instrucción precisa para la IA |
+| :--- | :--- | :--- |
+| **Tooltip HTML** | Cuadro emergente al pasar el cursor (`hover`) sobre una manzana o barra. | *"Crea una columna `tooltip_html` con CSS inline que muestre Barrio, ID de manzana, población, densidad (`hab/ha`), valor de la manzana y brecha con el Barrio y Santiago."* |
+| **Jerarquía de Capas (`Layers`)** | Orden de apilamiento visual en `MapLibre` (de abajo hacia arriba). | *"Apila: 1) `add_fill_layer` (manzanas), 2) `add_line_layer` gris sutil (27 barrios), 3) `add_line_layer` blanco ancho (halo Zonas), 4) `add_line_layer` naranjo (4 Zonas), 5) `add_symbol_layer` (etiquetas)."* |
+| **Cero Estructural vs. `NA`** | Manzanas no residenciales (`n_per == 0`: parques, comercio exclusivo). | *"Asigna `NA_real_` cuando `n_per == 0`. Impútalo con `st_nearest_feature()` para no dejar huecos en el mapa, pero promedia por barrio filtrando `manzana_habitada == TRUE`."* |
+| **Puntos Invisibles en `ggplotly`** | `geom_hline()` en `ggplotly` no muestra tooltip por sí solo al pasar el cursor. | *"Superpón un `geom_point(alpha = 0, aes(text = hover_ref))` sobre cada `geom_hline` para activar el tooltip interactivo en las líneas punteadas de cada Zona."* |
+| **Semáforo Estadístico (`styleInterval`)** | Coloreo condicional de celdas en `DT::datatable` según umbrales de la distribución. | *"Colorea en ámbar (`#fff3cd`) las celdas que superen la Media Comunal y en rojo (`#f8d7da`) las que superen $\text{Media} + 0,5\,\text{DE}$."* |
+
+---
+
+# Parte 3. Disección de `4-mattasur-analysis-technical.qmd` {background-color="#9a3412"}
+
+Arquitectura Real del Proyecto NUMIC – Gran Matta Sur
+
+---
+
+## 3.1. Disolución de Barrios en las 4 Zonas MTMS (`st_union`) {.smaller}
+
+La **Mesa Territorial Matta Sur (MTMS)** y el **CEIDELC** organizan los **7 barrios** del Sector Suroriente en **4 Zonas**. En lugar de editar un Shapefile manualmente en QGIS, lo generamos de forma 100% reproducible en R:
+
+```r
+barrios_stgo_utm <- st_read(".../LIMITE_BARRIOS.shp", quiet = TRUE) |>
+  st_transform(32719) |>
+  st_make_valid() |>
+  mutate(
+    zona_corta = case_when(
+      BARRIO %in% c("VIEL", "HUEMUL")           ~ "Zona 1",
+      BARRIO %in% c("MATTA SUR", "BOGOTA")      ~ "Zona 2",
+      BARRIO %in% c("SANTA ELENA")              ~ "Zona 3",
+      BARRIO %in% c("FRANKLIN", "SIERRA BELLA") ~ "Zona 4",
+      TRUE ~ NA_character_
+    ),
+    es_gran_matta_sur = !is.na(zona_corta)
+  )
+
+# Fusión geométrica de los 7 barrios en los 4 polígonos zonales
+zonas_mtms_utm <- barrios_stgo_utm |>
+  filter(es_gran_matta_sur) |>
+  group_by(zona_corta, zona_mtms) |>
+  summarise(
+    barrios_zona = paste(BARRIO, collapse = " + "),
+    geometry     = st_union(geometry),
+    .groups      = "drop"
+  ) |>
+  st_make_valid()
+```
+
+---
+
+## 3.2. Interpolación Areal de Veredas SIEDU sobre Manzanas 2024 {.smaller}
+
+¿Cómo transferimos el estado de veredas (`LB2018_IS40_Calidad_Veredas`, medido en 2018) a las manzanas del **Censo 2024** cuando sus geometrías difieren? **"Las manzanas censales mandan"**:
+
+```r
+# 1. Intersección geométrica en metros (EPSG:32719)
+veredas_interseccion <- suppressWarnings(
+  st_intersection(
+    swalk_stgo_utm |> select(qswalk),   # Puntaje 1 (Excelente) a 5 (No existe)
+    censo_stgo_utm |> select(cod_mzn)   # Geometría maestra Censo 2024
+  )
+) |>
+  mutate(area_fragmento = as.numeric(st_area(Shape))) |>
+  st_drop_geometry()
+
+# 2. Promedio ponderado por área dentro de cada manzana censal y re-escalamiento 0-100%
+veredas_mzn_ponderada <- veredas_interseccion |>
+  group_by(cod_mzn) |>
+  summarise(
+    qswalk_pond = sum(qswalk * area_fragmento, na.rm = TRUE) / sum(area_fragmento, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(ind_deterioro_veredas = ((qswalk_pond - 1) / 4) * 100)
+```
+
+---
+
+## 3.3. Función Constructora de Mapas (`crear_mapa_manzana_stgo`) {.smaller}
+
+En vez de copiar y pegar 8 veces el código de `maplibre()`, encapsulamos el diseño en una función reutilizable con soporte para unidades (`%` o `años`), rangos fijos o por cuantiles, y tooltip estandarizado:
+
+```r
+crear_mapa_manzana_stgo <- function(
+    datos_sf, barrios_sf, zonas_sf, var_col, var_barrio_col, prom_santiago_val,
+    titulo_leyenda, subtitulo_var, paleta_colores,
+    sufijo_unidad = "%", sufijo_brecha = " pp", rango_fijo = NULL, lineas_extra_fn = NULL
+) {
+  # 1. Cortes de leyenda (fijos ej. 0-100% en Seguridad, o percentiles P2-P50-P98)
+  cortes <- if (!is.null(rango_fijo)) rango_fijo else
+    as.numeric(quantile(datos_sf[[var_col]], probs = c(0.02, 0.50, 0.98), na.rm = TRUE))
+
+  # 2. Construcción vectorizada del Tooltip HTML con str_to_title(barrio) y brechas
+  barrio_titulo_inicial <- str_to_title(datos_sf$barrio)
+  # ... [arma datos_sf$tooltip_html] ...
+
+  # 3. Apilamiento de capas WebGL en MapLibre
+  maplibre(bounds = barrios_sf, style = carto_style("positron")) |>
+    add_fill_layer(id = "mzn_fill_layer", source = datos_sf, tooltip = "tooltip_html", ...) |>
+    add_line_layer(id = "barrios_outline", source = barrios_sf, line_color = "#334155", line_width = 1.0) |>
+    add_line_layer(id = "zonas_mtms_halo", source = zonas_sf, line_color = "#ffffff", line_width = 3.2) |>
+    add_line_layer(id = "zonas_mtms_highlight", source = zonas_sf, line_color = "#ea580c", line_width = 2.1)
+}
+```
+
+---
+
+## 3.4. Síntesis Multidimensional: Heatmap Z-Score y Tabla `DT` {.smaller}
+
+Para comparar en una sola matriz variables medidas en **años** (`Escolaridad`) y en **porcentajes** (`Déficit Vivienda`, `Desocupación`, `Infraestructura`), estandarizamos cada columna en **Puntajes Z ($Z$-scores)**:
+
+```r
+df_heatmap <- resumen_barrios |>
+  select(
+    barrio, etiqueta_y, zona_mtms, es_gran_matta_sur,
+    `1. Escolaridad (años)` = prom_escolaridad18,
+    `2. Déficit Vivienda`   = pct_deficit_cuant,
+    `3. Disconfort Amb.`    = ind_disconfort_amb,
+    `4. Exposición Delito`  = ind_inseguridad_del,
+    `5. Desocupación`       = tasa_desocupacion,
+    `6. Migración`          = pct_inmigrantes,
+    `7. Envejecimiento`     = pct_adulto_mayor,
+    `8. Infraestructura`    = ind_deterioro_veredas
+  ) |>
+  pivot_longer(cols = -c(barrio, etiqueta_y, zona_mtms, es_gran_matta_sur),
+               names_to = "dimension", values_to = "valor_raw") |>
+  group_by(dimension) |>
+  mutate(
+    z_raw   = as.numeric(scale(valor_raw)),
+    # Invertimos solo Escolaridad para que Rojo (+Z) sea siempre MAYOR criticidad
+    z_score = if_else(dimension == "1. Escolaridad (años)", -z_raw, z_raw),
+    z_clip  = pmin(pmax(z_score, -2), 2)
+  )
+```
+
+---
+
+# Parte 4. Prompt Engineering y Despliegue Web {background-color="#065f46"}
+
+Cómo pedirle cambios precisos a la IA y publicar en GitHub Pages
+
+---
+
+## 4.1. Anatomía de un Buen Prompt Territorial {.smaller}
+
+::: {.columns}
+::: {.column width="48%"}
+### ❌ Lo que NO debes pedir
+- *"Hazme un mapa de Santiago con datos del censo."*
+- *"Ponle colores bonitos al mapa de medioambiente."*
+- *"Agrega las veredas por manzana."*
+- *"Sube la carpeta a mi GitHub."* *(¡Riesgo de subir gigabytes de datos privados o romper el límite de 100 MB!)*
+:::
+
+::: {.column width="52%"}
+### ✅ Lo que SÍ debes especificar
+1. **Geometría maestra y `EPSG`:** *"Censo 2024 manda; calcula áreas e intersecciones en `EPSG:32719` y mapea en `EPSG:4326`."*
+2. **Denominadores y ceros:** *"Calcula tasas sobre `n_per`, `n_vp`, `n_hog` o `n_pea`; imputa `n_per == 0` solo para el mapa y exclúyelos del promedio barrial."*
+3. **Semántica cromática y rangos:** *"En medioambiente usa verde para bajo disconfort y terracota para alto disconfort; en seguridad fija el rango de `0%` a `100%`."*
+4. **Arquitectura de despliegue:** *"Usa `_quarto.yml` con `output-dir: docs`, `theme: {light: cosmo, dark: darkly}`, `.nojekyll` y un `.gitignore` por lista blanca (`/*`)."*
+:::
+:::
+
+---
+
+## 4.2. Flujo de Publicación en GitHub Pages (`docs/`) {.smaller}
+
+```{mermaid}
+flowchart LR
+    A["Archivos Fuente<br/>index.qmd + report.qmd + _quarto.yml"] -->|quarto render| B["Carpeta Compilada<br/>docs/ + docs/.nojekyll"]
+    B -->|".gitignore (Lista Blanca)"| C["Git Commit & Push<br/>origin/main (< 100 MiB/archivo)"]
+    C -->|"GitHub Settings > Pages<br/>Branch: main /docs"| D["Portal Público en Línea<br/>territorio-numic.github.io"]
+```
+
+1. **Organización de GitHub (`territorio-numic`):** Permite obtener un subdominio institucional limpio sin exponer cuentas personales.
+2. **Protección Ética y de Tamaño (`.gitignore`):** Bloquea con `/*` las carpetas de trabajo de campo, consentimientos informados y bases brutas, permitiendo únicamente los archivos del sitio web.
+3. **Acceso al Manual Completo del Curso:**
+   👉 Haz clic en [**Abrir Manual Completo del Curso (`geovisor-ia_report.html`)**](geovisor-ia_report.html) para revisar el texto completo y los visores interactivos en vivo.
